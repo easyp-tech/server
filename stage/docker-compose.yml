@@ -6,7 +6,7 @@ volumes:
 services:
 
   easyp:
-    image: kriogenik/easyp:stage
+    image: cr.yandex/crplga9vcvsvk4uv6541/easyp:stage
     restart: always
     command: [
       "-cfg=/config.yml",

@@ -12,7 +12,7 @@ export GOARCH=amd64
 for d in ./cmd/*; do
 	if test -f ${d}/docker/Dockerfile; then
 	  go build -o bin/ ${d}
-	  dockerTag="kriogenik/${d#"./cmd/"}:stage"
+	  dockerTag="cr.yandex/crplga9vcvsvk4uv6541/${d#"./cmd/"}:stage"
 	  docker build -f ${d}/docker/Dockerfile --tag ${dockerTag} .
 	  echo ${dockerTag}
 	  docker push ${dockerTag}
