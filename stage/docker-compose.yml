@@ -1,0 +1,27 @@
+version: "3.9"
+
+volumes:
+  reverse-proxy:
+
+services:
+
+  easyp:
+    image: kriogenik/easyp:stage
+    restart: always
+    command: [
+      "-cfg=/config.yml",
+      "-log_level=debug",
+    ]
+    volumes:
+      - "./config.yml:/config.yml"
+      - "./cache:/cache/"
+
+  reverse-proxy:
+    image: caddy:2.6.2-alpine
+    volumes:
+      - "reverse-proxy:/data/"
+      - "./Caddyfile:/etc/caddy/Caddyfile"
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped

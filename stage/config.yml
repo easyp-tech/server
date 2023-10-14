@@ -1,0 +1,16 @@
+dev_mode: true
+server:
+  external:
+    domain: "easyp.tech"
+    host: "0.0.0.0"
+    port:
+      connect: 8080
+      metric: 8081
+storage:
+  root: "/cache"
+  urls:
+    - "https://github.com/googleapis/googleapis.git"
+    - "https://github.com/bufbuild/protovalidate.git"
+    - "https://github.com/bufbuild/protoc-gen-validate.git"
+    - "https://github.com/bufbuild/buf.git"
+    - "https://github.com/RussianInvestments/invest-api-go-sdk.git"

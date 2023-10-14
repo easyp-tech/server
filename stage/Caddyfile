@@ -1,0 +1,31 @@
+{
+    log {
+            output stderr
+            format json
+            level  INFO
+    }
+}
+
+(caching) {
+     header {
+        Cache-Control "no-cache, no-store, must-revalidate"
+     }
+}
+
+https://links-to.site {
+  handle {
+        root          * /build
+        try_files {path} /index.html
+        encode gzip zstd
+        file_server * {
+        root   /build
+        browse index.html
+        index  index.html
+        disable_canonical_uris
+    }
+  }
+
+  handle /* {
+        reverse_proxy easyp:8080
+  }
+}
