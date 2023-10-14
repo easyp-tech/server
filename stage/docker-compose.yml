@@ -10,7 +10,6 @@ services:
     restart: always
     command: [
       "-cfg=/config.yml",
-      "-log_level=debug",
     ]
     volumes:
       - "./config.yml:/config.yml"

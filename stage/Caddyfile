@@ -12,7 +12,7 @@
      }
 }
 
-https://links-to.site {
+https://stage.easyp.tech {
   handle {
         root          * /build
         try_files {path} /index.html
