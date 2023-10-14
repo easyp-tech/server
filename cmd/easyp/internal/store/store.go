@@ -24,14 +24,14 @@ type store struct {
 // New returns new instance of store.
 func New(ctx context.Context, rootDir string, urls []string) (core.Store, error) {
 	for i := range urls {
-
 		u, err := url.Parse(urls[i])
 		if err != nil {
 			return nil, fmt.Errorf("url.Parse: %w", err)
 		}
 
 		uri := strings.Split(strings.TrimLeft(u.Path, "/"), "/")
-		if len(uri) != 2 {
+		const expectedUriPathSize = 2
+		if len(uri) != expectedUriPathSize {
 			return nil, fmt.Errorf("%w: %s", core.ErrInvalidArgument, urls[i])
 		}
 
