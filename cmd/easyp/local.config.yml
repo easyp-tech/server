@@ -9,8 +9,5 @@ server:
 storage:
   root: "../cache"
   urls:
-    - "https://github.com/googleapis/googleapis.git"
-    - "https://github.com/bufbuild/protovalidate.git"
     - "https://github.com/bufbuild/protoc-gen-validate.git"
-    - "https://github.com/bufbuild/buf.git"
     - "https://github.com/RussianInvestments/invest-api-go-sdk.git"
