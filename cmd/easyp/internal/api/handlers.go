@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"path"
 	"path/filepath"
 
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/core"
+	"github.com/easyp-tech/server/internal/logkey"
 	v1alpha1 "github.com/easyp-tech/server/proto/buf/alpha/module/v1alpha1"
 	registryv1alpha1 "github.com/easyp-tech/server/proto/buf/alpha/registry/v1alpha1"
 )
@@ -132,11 +134,10 @@ func (a *api) DownloadManifestAndBlobs(
 		if err != nil {
 			return fmt.Errorf("repository.Open: %w", err)
 		}
-
 		defer func() {
 			err := f.Close()
 			if err != nil {
-				fmt.Println(err)
+				logkey.FromContext(ctx).Warn("f.Close", slog.String(logkey.Error, err.Error()))
 			}
 		}()
 
