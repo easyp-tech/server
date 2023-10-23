@@ -2,7 +2,8 @@ package logkey
 
 import (
 	"context"
-	"log/slog"
+
+	"golang.org/x/exp/slog"
 )
 
 type ctxMarker struct{}

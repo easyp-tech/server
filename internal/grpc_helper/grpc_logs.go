@@ -3,10 +3,10 @@ package grpc_helper
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
 	grpc_recovery "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
+	"golang.org/x/exp/slog"
 	"google.golang.org/grpc/codes"
 
 	"github.com/easyp-tech/server/internal/logkey"

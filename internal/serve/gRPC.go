@@ -3,9 +3,9 @@ package serve
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net"
 
+	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 
 	"github.com/easyp-tech/server/internal/logkey"
