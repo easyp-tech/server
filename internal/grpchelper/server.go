@@ -1,4 +1,4 @@
-package grpc_helper
+package grpchelper
 
 import (
 	"time"
@@ -33,8 +33,7 @@ func NewServer(
 	converter GRPCCodesConverterHandler,
 	extraUnary []grpc.UnaryServerInterceptor,
 	extraStream []grpc.StreamServerInterceptor,
-) (server *grpc.Server, healthServer *health.Server) {
-
+) (*grpc.Server, *health.Server) {
 	loggingOpts := []logging.Option{
 		logging.WithLogOnEvents(
 			logging.StartCall,
@@ -60,12 +59,14 @@ func NewServer(
 		StreamConvertCodesServerInterceptor(converter),
 	}, extraStream...)
 
-	server = grpc.NewServer(
+	server := grpc.NewServer(
 		grpc.Creds(insecure.NewCredentials()), // FIXME: add tls.
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    keepaliveTime,
-			Timeout: keepaliveTimeout,
-		}),
+		grpc.KeepaliveParams(
+			keepalive.ServerParameters{ //nolint:exhaustruct
+				Time:    keepaliveTime,
+				Timeout: keepaliveTimeout,
+			},
+		),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             keepaliveMinTime,
 			PermitWithoutStream: true,
@@ -79,7 +80,8 @@ func NewServer(
 	)
 
 	reflection.Register(server)
-	healthServer = health.NewServer()
+
+	healthServer := health.NewServer()
 	healthpb.RegisterHealthServer(server, healthServer)
 
 	connect.WithInterceptors()
@@ -95,8 +97,7 @@ func NewConnectServer(
 	converter GRPCCodesConverterHandler,
 	extraUnary []grpc.UnaryServerInterceptor,
 	extraStream []grpc.StreamServerInterceptor,
-) (server *grpc.Server, healthServer *health.Server) {
-
+) (*grpc.Server, *health.Server) {
 	loggingOpts := []logging.Option{
 		logging.WithLogOnEvents(
 			logging.StartCall,
@@ -122,12 +123,14 @@ func NewConnectServer(
 		StreamConvertCodesServerInterceptor(converter),
 	}, extraStream...)
 
-	server = grpc.NewServer(
+	server := grpc.NewServer(
 		grpc.Creds(insecure.NewCredentials()), // FIXME: add tls.
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    keepaliveTime,
-			Timeout: keepaliveTimeout,
-		}),
+		grpc.KeepaliveParams(
+			keepalive.ServerParameters{ //nolint:exhaustruct
+				Time:    keepaliveTime,
+				Timeout: keepaliveTimeout,
+			},
+		),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             keepaliveMinTime,
 			PermitWithoutStream: true,
@@ -141,7 +144,8 @@ func NewConnectServer(
 	)
 
 	reflection.Register(server)
-	healthServer = health.NewServer()
+
+	healthServer := health.NewServer()
 	healthpb.RegisterHealthServer(server, healthServer)
 
 	return server, healthServer

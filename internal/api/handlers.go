@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"io/fs"
 	"path"
 	"path/filepath"
@@ -15,12 +14,12 @@ import (
 	registryv1alpha1 "github.com/bufbuild/buf/private/gen/proto/go/buf/alpha/registry/v1alpha1"
 	"github.com/samber/lo"
 	"golang.org/x/crypto/sha3"
-	"golang.org/x/exp/slog"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/core"
-	"github.com/easyp-tech/server/internal/logkey"
 )
+
+const hashLen = 64
 
 func (a *api) GetModulePins(
 	ctx context.Context,
@@ -30,6 +29,7 @@ func (a *api) GetModulePins(
 	error,
 ) {
 	repositories := make([]core.Repository, len(req.Msg.ModuleReferences))
+
 	for i := range req.Msg.ModuleReferences {
 		repository, err := a.core.GetRepository(ctx, core.GetRequest{
 			Owner:      req.Msg.ModuleReferences[i].Owner,
@@ -46,13 +46,11 @@ func (a *api) GetModulePins(
 	return &connect.Response[registryv1alpha1.GetModulePinsResponse]{
 		Msg: &registryv1alpha1.GetModulePinsResponse{
 			ModulePins: lo.Map(repositories, func(item core.Repository, index int) *v1alpha1.ModulePin {
-				return &v1alpha1.ModulePin{
+				return &v1alpha1.ModulePin{ //nolint:exhaustruct
 					Remote:     a.domain,
 					Owner:      item.Owner,
 					Repository: item.Repository,
-					// Branch:     item.Branch,
-					Commit: item.Commit,
-					// CreateTime: timestamppb.New(item.CreatedAt),
+					Commit:     item.Commit,
 				}
 			}),
 		},
@@ -66,14 +64,18 @@ func (a *api) GetRepositoriesByFullName(
 	*connect.Response[registryv1alpha1.GetRepositoriesByFullNameResponse],
 	error,
 ) {
+	repositories := make([]core.Repository, 0, len(req.Msg.FullNames))
 
-	repositories := make([]core.Repository, len(req.Msg.FullNames))
-	for i := range req.Msg.FullNames {
-		owner, repositoryName := filepath.Split(req.Msg.FullNames[i])
-		repository, err := a.core.GetRepository(ctx, core.GetRequest{
-			Owner:      owner,
-			Repository: repositoryName,
-		})
+	for _, name := range req.Msg.FullNames {
+		owner, repositoryName := filepath.Split(name)
+
+		repository, err := a.core.GetRepository(
+			ctx,
+			core.GetRequest{ //nolint:exhaustruct
+				Owner:      owner,
+				Repository: repositoryName,
+			},
+		)
 		if err != nil {
 			return nil, fmt.Errorf("a.core.GetRepository: %w", err)
 		}
@@ -84,7 +86,7 @@ func (a *api) GetRepositoriesByFullName(
 	return &connect.Response[registryv1alpha1.GetRepositoriesByFullNameResponse]{
 		Msg: &registryv1alpha1.GetRepositoriesByFullNameResponse{
 			Repositories: lo.Map(repositories, func(item core.Repository, index int) *registryv1alpha1.Repository {
-				return &registryv1alpha1.Repository{
+				return &registryv1alpha1.Repository{ //nolint:exhaustruct
 					Id:            path.Join(a.domain, item.Owner, item.Repository),
 					CreateTime:    timestamppb.New(item.CreatedAt),
 					UpdateTime:    timestamppb.New(item.UpdatedAt),
@@ -92,7 +94,7 @@ func (a *api) GetRepositoriesByFullName(
 					Owner:         &registryv1alpha1.Repository_UserId{UserId: item.Owner},
 					Visibility:    registryv1alpha1.Visibility_VISIBILITY_PUBLIC,
 					OwnerName:     item.Owner,
-					Description:   "", // TODO
+					Description:   "", // TODO //nolint:godox
 					Url:           path.Join(a.domain, item.Owner, item.Repository),
 					DefaultBranch: item.Branch,
 				}
@@ -108,7 +110,6 @@ func (a *api) DownloadManifestAndBlobs(
 	*connect.Response[registryv1alpha1.DownloadManifestAndBlobsResponse],
 	error,
 ) {
-
 	repository, err := a.core.GetRepository(ctx, core.GetRequest{
 		Owner:      req.Msg.Owner,
 		Repository: req.Msg.Repository,
@@ -119,77 +120,31 @@ func (a *api) DownloadManifestAndBlobs(
 	}
 
 	manifestB := bytes.NewBuffer(nil)
+
 	var blobs []*v1alpha1.Blob
-	err = fs.WalkDir(repository, ".", func(path string, info fs.DirEntry, err error) error {
-		switch {
-		case err != nil:
-			return nil
-		case info.IsDir():
-			return nil
-		case filepath.Ext(path) != ".proto":
-			return nil
-		}
 
-		f, err := repository.Open(path)
-		if err != nil {
-			return fmt.Errorf("repository.Open: %w", err)
-		}
-		defer func() {
-			err := f.Close()
-			if err != nil {
-				logkey.FromContext(ctx).Warn("f.Close", slog.String(logkey.Error, err.Error()))
+	err = fs.WalkDir(
+		repository,
+		".",
+		func(path string, info fs.DirEntry, err error) error {
+			digest, blob, errInner := processDirEntry(repository, path, info, err)
+			if errInner != nil {
+				return errInner
 			}
-		}()
 
-		buf, err := io.ReadAll(f)
-		if err != nil {
-			return fmt.Errorf("io.ReadAll: %w", err)
-		}
+			manifestB.WriteString(digest)
+			blobs = append(blobs, blob)
 
-		d := sha3.NewShake256()
-		_, err = d.Write(buf)
-		if err != nil {
-			return fmt.Errorf("d.Write: %w", err)
-		}
-
-		hash := make([]byte, 64)
-		_, err = d.Read(hash)
-		if err != nil {
-			return fmt.Errorf("d.Read: %w", err)
-		}
-
-		digest := fmt.Sprintf("shake256:%s  %s\n", hex.EncodeToString(hash), path)
-		manifestB.WriteString(digest)
-
-		blobs = append(blobs, &v1alpha1.Blob{
-			Digest: &v1alpha1.Digest{
-				DigestType: v1alpha1.DigestType_DIGEST_TYPE_SHAKE256,
-				Digest:     hash,
-			},
-			Content: buf,
-		})
-
-		return nil
-	})
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("fs.WalkDir: %w", err)
 	}
 
-	buf, err := io.ReadAll(bytes.NewBuffer(manifestB.Bytes()))
+	hash, err := sha3Shake256(manifestB.Bytes())
 	if err != nil {
-		return nil, fmt.Errorf("io.ReadAll: %w", err)
-	}
-
-	d := sha3.NewShake256()
-	_, err = d.Write(buf)
-	if err != nil {
-		return nil, fmt.Errorf("d.Write: %w", err)
-	}
-
-	hash := make([]byte, 64)
-	_, err = d.Read(hash)
-	if err != nil {
-		return nil, fmt.Errorf("d.Read: %w", err)
+		return nil, fmt.Errorf("calculating manifest hash: %w", err)
 	}
 
 	return &connect.Response[registryv1alpha1.DownloadManifestAndBlobsResponse]{
@@ -204,4 +159,62 @@ func (a *api) DownloadManifestAndBlobs(
 			Blobs: blobs,
 		},
 	}, nil
+}
+
+func processDirEntry(
+	repository *core.Repository,
+	path string,
+	info fs.DirEntry,
+	err error,
+) (string, *v1alpha1.Blob, error) {
+	switch {
+	case err != nil:
+		return "", nil, nil //nolint:nilerr
+	case info.IsDir():
+		return "", nil, nil
+	case filepath.Ext(path) != ".proto":
+		return "", nil, nil
+	}
+
+	buf, err := fs.ReadFile(repository, path)
+	if err != nil {
+		return "", nil, fmt.Errorf("reading %q: %w", path, err)
+	}
+
+	hash, err := sha3Shake256(buf)
+	if err != nil {
+		return "", nil, fmt.Errorf("hashing %q: %w", path, err)
+	}
+
+	return buildDigest(path, hash), buildBlob(hash, buf), nil
+}
+
+func buildDigest(path string, hash []byte) string {
+	return fmt.Sprintf("shake256:%s  %s\n", hex.EncodeToString(hash), path)
+}
+
+func buildBlob(hash []byte, data []byte) *v1alpha1.Blob {
+	return &v1alpha1.Blob{
+		Digest: &v1alpha1.Digest{
+			DigestType: v1alpha1.DigestType_DIGEST_TYPE_SHAKE256,
+			Digest:     hash,
+		},
+		Content: data,
+	}
+}
+
+func sha3Shake256(data []byte) ([]byte, error) {
+	d := sha3.NewShake256()
+
+	if _, err := d.Write(data); err != nil {
+		return nil, fmt.Errorf("calculating hash: %w", err)
+	}
+
+	hash := make([]byte, hashLen)
+
+	if _, err := d.Read(hash); err != nil {
+		return nil, fmt.Errorf("extracting hash: %w", err)
+	}
+
+	return hash, nil
 }

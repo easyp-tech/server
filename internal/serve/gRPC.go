@@ -23,6 +23,7 @@ func GRPC(log *slog.Logger, host string, port uint16, srv *grpc.Server) func(con
 		errc := make(chan error, 1)
 		go func() { errc <- srv.Serve(ln) }()
 		log.Info("started", slog.String(logkey.Host, host), slog.Uint64(logkey.Port, uint64(port)))
+
 		defer log.Info("shutdown")
 
 		select {
@@ -30,6 +31,7 @@ func GRPC(log *slog.Logger, host string, port uint16, srv *grpc.Server) func(con
 		case <-ctx.Done():
 			srv.GracefulStop() // It will not interrupt streaming.
 		}
+
 		if err != nil {
 			return fmt.Errorf("srv.Serve: %w", err)
 		}

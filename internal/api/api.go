@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/core"
-	"github.com/easyp-tech/server/internal/grpc_helper"
+	"github.com/easyp-tech/server/internal/grpchelper"
 	"github.com/easyp-tech/server/internal/logkey"
 	"github.com/easyp-tech/server/internal/metrics"
 )
@@ -31,17 +31,24 @@ type api struct {
 }
 
 // New creates and returns gRPC server.
-func New(ctx context.Context, m metrics.Metrics, core application, reg *prometheus.Registry, namespace, domain string) (*grpc.Server, *http.ServeMux) {
+func New(
+	ctx context.Context,
+	m metrics.Metrics,
+	core application,
+	reg *prometheus.Registry,
+	namespace,
+	domain string,
+) (*grpc.Server, *http.ServeMux) {
 	log := logkey.FromContext(ctx)
 	subsystem := "api"
 
-	grpcMetrics := grpc_helper.NewServerMetrics(reg, namespace, subsystem)
-	srvExternal, _ := grpc_helper.NewServer(m, log, grpcMetrics, apiError,
+	grpcMetrics := grpchelper.NewServerMetrics(reg, namespace, subsystem)
+	srvExternal, _ := grpchelper.NewServer(m, log, grpcMetrics, apiError,
 		[]grpc.UnaryServerInterceptor{grpc_auth.UnaryServerInterceptor(nil)},   // Nil because we are using override.
 		[]grpc.StreamServerInterceptor{grpc_auth.StreamServerInterceptor(nil)}, // Nil because we are using override.
 	)
 
-	a := &api{
+	a := &api{ //nolint:exhaustruct
 		core:   core,
 		domain: domain,
 	}
@@ -65,6 +72,7 @@ func apiError(err error) *status.Status {
 	}
 
 	code := codes.Internal
+
 	switch {
 	case errors.Is(err, core.ErrInvalidArgument):
 		code = codes.InvalidArgument

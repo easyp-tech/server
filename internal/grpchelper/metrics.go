@@ -1,4 +1,4 @@
-package grpc_helper
+package grpchelper
 
 import (
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-middleware/providers/prometheus"

@@ -1,4 +1,4 @@
-package grpc_helper
+package grpchelper
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 func recoveryFunc(m metrics.Metrics, err error) grpc_recovery.RecoveryHandlerFuncContext {
 	return func(ctx context.Context, p interface{}) error {
 		m.PanicsTotal.Inc()
+
 		l := logkey.FromContext(ctx)
 		l.Error("panic",
 			slog.String(logkey.GRPCCode, codes.Internal.String()),
@@ -26,7 +27,7 @@ func recoveryFunc(m metrics.Metrics, err error) grpc_recovery.RecoveryHandlerFun
 	}
 }
 
-func interceptorLogger(l *slog.Logger) logging.Logger {
+func interceptorLogger(l *slog.Logger) logging.Logger { //nolint:ireturn
 	return logging.LoggerFunc(func(ctx context.Context, lvl logging.Level, msg string, fields ...any) {
 		switch lvl {
 		case logging.LevelDebug:
