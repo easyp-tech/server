@@ -7,19 +7,19 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"path"
 	"path/filepath"
 
 	"connectrpc.com/connect"
+	v1alpha1 "github.com/bufbuild/buf/private/gen/proto/go/buf/alpha/module/v1alpha1"
+	registryv1alpha1 "github.com/bufbuild/buf/private/gen/proto/go/buf/alpha/registry/v1alpha1"
 	"github.com/samber/lo"
 	"golang.org/x/crypto/sha3"
+	"golang.org/x/exp/slog"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/core"
 	"github.com/easyp-tech/server/internal/logkey"
-	v1alpha1 "github.com/easyp-tech/server/proto/buf/alpha/module/v1alpha1"
-	registryv1alpha1 "github.com/easyp-tech/server/proto/buf/alpha/registry/v1alpha1"
 )
 
 func (a *api) GetModulePins(
@@ -50,9 +50,9 @@ func (a *api) GetModulePins(
 					Remote:     a.domain,
 					Owner:      item.Owner,
 					Repository: item.Repository,
-					Branch:     item.Branch,
-					Commit:     item.Commit,
-					CreateTime: timestamppb.New(item.CreatedAt),
+					// Branch:     item.Branch,
+					Commit: item.Commit,
+					// CreateTime: timestamppb.New(item.CreatedAt),
 				}
 			}),
 		},

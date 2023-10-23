@@ -3,12 +3,12 @@ package serve
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/exp/slog"
 
 	"github.com/easyp-tech/server/internal/logkey"
 )

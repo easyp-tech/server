@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/bufbuild/buf/private/gen/proto/connect/buf/alpha/registry/v1alpha1/registryv1alpha1connect"
 	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/auth"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
@@ -15,7 +16,6 @@ import (
 	"github.com/easyp-tech/server/internal/grpc_helper"
 	"github.com/easyp-tech/server/internal/logkey"
 	"github.com/easyp-tech/server/internal/metrics"
-	"github.com/easyp-tech/server/proto/buf/alpha/registry/v1alpha1/registryv1alpha1connect"
 )
 
 type application interface {

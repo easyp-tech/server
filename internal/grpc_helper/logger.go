@@ -2,8 +2,8 @@ package grpc_helper
 
 import (
 	"fmt"
-	"log/slog"
 
+	"golang.org/x/exp/slog"
 	"google.golang.org/grpc/grpclog"
 )
 
