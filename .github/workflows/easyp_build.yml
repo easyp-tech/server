@@ -3,8 +3,6 @@ run-name: ${{ github.actor }}
 
 on:
   push:
-    paths:
-      - 'cmd/easyp/*'
     branches:
       - 'main'
 
