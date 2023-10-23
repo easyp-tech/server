@@ -15,14 +15,16 @@ import (
 	"github.com/easyp-tech/server/cmd/easyp/internal/core"
 )
 
-var _ core.Store = &store{}
+var _ core.Store = (*store)(nil)
+
+const expectedURIPathSize = 2
 
 type store struct {
 	rootDir string
 }
 
 // New returns new instance of store.
-func New(ctx context.Context, rootDir string, urls []string) (core.Store, error) {
+func New(ctx context.Context, rootDir string, urls []string) (*store, error) {
 	for i := range urls {
 		u, err := url.Parse(urls[i])
 		if err != nil {
@@ -30,8 +32,8 @@ func New(ctx context.Context, rootDir string, urls []string) (core.Store, error)
 		}
 
 		uri := strings.Split(strings.TrimLeft(u.Path, "/"), "/")
-		const expectedUriPathSize = 2
-		if len(uri) != expectedUriPathSize {
+
+		if len(uri) != expectedURIPathSize {
 			return nil, fmt.Errorf("%w: %s", core.ErrInvalidArgument, urls[i])
 		}
 
@@ -43,10 +45,16 @@ func New(ctx context.Context, rootDir string, urls []string) (core.Store, error)
 		if err == nil {
 			continue
 		}
-		_, err = git.PlainCloneContext(ctx, filepath.Join(rootDir, owner, repository), false, &git.CloneOptions{
-			URL:      urls[i],
-			Progress: os.Stderr,
-		})
+
+		_, err = git.PlainCloneContext(
+			ctx,
+			filepath.Join(rootDir, owner, repository),
+			false,
+			&git.CloneOptions{ //nolint:exhaustruct
+				URL:      urls[i],
+				Progress: os.Stderr,
+			},
+		)
 		if err != nil {
 			return nil, fmt.Errorf("git.PlainClone: %w", err)
 		}

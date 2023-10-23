@@ -1,4 +1,4 @@
-package grpc_helper
+package grpchelper
 
 import (
 	"google.golang.org/grpc/codes"

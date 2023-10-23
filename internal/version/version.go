@@ -5,6 +5,7 @@ import "runtime/debug"
 // System returns application version based on build info.
 func System() string {
 	bi, ver := buildVersion()
+
 	switch {
 	case bi == nil:
 		return "(unknown)"
@@ -15,23 +16,28 @@ func System() string {
 	}
 }
 
-func buildVersion() (bi *debug.BuildInfo, ver string) {
+func buildVersion() (*debug.BuildInfo, string) {
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
 		return nil, ""
 	}
+
 	const revisionPrefix = 7
+
 	revision := buildSetting(bi, "vcs.revision")
 	modified := buildSetting(bi, "vcs.modified")
+
 	time := buildSetting(bi, "vcs.time")
 	if revision == "" {
 		return bi, time
 	} else if len(revision) > revisionPrefix {
 		revision = revision[:revisionPrefix]
 	}
+
 	if modified != "false" {
 		revision += "-modified"
 	}
+
 	if time == "" {
 		return bi, revision
 	}

@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"fmt"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -16,8 +17,13 @@ func Start(ctx context.Context, services ...func(context.Context) error) error {
 
 	for i := range services {
 		i := i
+
 		g.Go(func() error { return services[i](groupCtx) })
 	}
 
-	return g.Wait()
+	if err := g.Wait(); err != nil {
+		return fmt.Errorf("got error executing %d services: %w", len(services), err)
+	}
+
+	return nil
 }
