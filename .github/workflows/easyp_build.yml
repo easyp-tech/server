@@ -1,4 +1,4 @@
-name: easyp-build
+name: build-docker
 run-name: ${{ github.actor }}
 
 on:
@@ -8,7 +8,7 @@ on:
 
 jobs:
 
-  build-goods:
+  build-docker:
     runs-on: ubuntu-latest
     steps:
       - name: Set up QEMU
