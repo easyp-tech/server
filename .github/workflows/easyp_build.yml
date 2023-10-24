@@ -1,16 +1,14 @@
-name: easyp-build
+name: build-docker
 run-name: ${{ github.actor }}
 
 on:
   push:
-    paths:
-      - 'cmd/easyp/*'
     branches:
       - 'main'
 
 jobs:
 
-  build-goods:
+  build-docker:
     runs-on: ubuntu-latest
     steps:
       - name: Set up QEMU
@@ -26,6 +24,5 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
-          file: "./cmd/easyp/docker/Dockerfile"
           push: true
           tags: cr.yandex/crplga9vcvsvk4uv6541/easyp:stage
