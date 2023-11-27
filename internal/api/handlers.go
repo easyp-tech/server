@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/easyp-tech/server/cmd/easyp/internal/core"
+	"github.com/easyp-tech/server/internal/core"
 )
 
 const hashLen = 64

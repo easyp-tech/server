@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 
-	"github.com/easyp-tech/server/cmd/easyp/internal/core"
+	"github.com/easyp-tech/server/internal/core"
 )
 
 var _ core.Store = (*store)(nil)

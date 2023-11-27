@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/easyp-tech/server/cmd/easyp/internal/core"
+	"github.com/easyp-tech/server/internal/core"
 	"github.com/easyp-tech/server/internal/grpchelper"
 	"github.com/easyp-tech/server/internal/logkey"
 	"github.com/easyp-tech/server/internal/metrics"
