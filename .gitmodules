@@ -1,0 +1,6 @@
+[submodule "api/_third_party/buf"]
+	path = api/_third_party/buf
+	url = https://github.com/bufbuild/buf.git
+[submodule "api/_third_party/protobuf"]
+	path = api/_third_party/protobuf
+	url = https://github.com/protocolbuffers/protobuf.git
