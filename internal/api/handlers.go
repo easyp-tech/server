@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 
 	"connectrpc.com/connect"
-	v1alpha1 "github.com/bufbuild/buf/private/gen/proto/go/buf/alpha/module/v1alpha1"
-	registryv1alpha1 "github.com/bufbuild/buf/private/gen/proto/go/buf/alpha/registry/v1alpha1"
 	"github.com/samber/lo"
 	"golang.org/x/crypto/sha3"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/easyp-tech/server/gen/proto/buf/alpha/module/v1alpha1"
+	registryv1alpha1 "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
 	"github.com/easyp-tech/server/internal/core"
 )
 
