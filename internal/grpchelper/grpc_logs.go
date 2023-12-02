@@ -9,7 +9,7 @@ import (
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc/codes"
 
-	"github.com/easyp-tech/server/internal/logkey"
+	"github.com/easyp-tech/server/internal/logger"
 	"github.com/easyp-tech/server/internal/metrics"
 )
 
@@ -17,10 +17,10 @@ func recoveryFunc(m metrics.Metrics, err error) grpc_recovery.RecoveryHandlerFun
 	return func(ctx context.Context, p interface{}) error {
 		m.PanicsTotal.Inc()
 
-		l := logkey.FromContext(ctx)
+		l := logger.FromContext(ctx)
 		l.Error("panic",
-			slog.String(logkey.GRPCCode, codes.Internal.String()),
-			slog.Any(logkey.PanicReason, p),
+			slog.String(logger.GRPCCode, codes.Internal.String()),
+			slog.Any(logger.PanicReason, p),
 		)
 
 		return err

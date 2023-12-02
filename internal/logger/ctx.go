@@ -1,4 +1,4 @@
-package logkey
+package logger
 
 import (
 	"context"

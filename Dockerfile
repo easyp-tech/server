@@ -7,6 +7,6 @@ FROM scratch
 WORKDIR /bin
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY /bin/easyp easyp
+COPY /bin/easyp-server easyp-server
 
-ENTRYPOINT ["easyp"]
+ENTRYPOINT ["easyp-server"]

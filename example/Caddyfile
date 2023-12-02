@@ -12,7 +12,7 @@
      }
 }
 
-https://stage.easyp.tech {
+https://easyp.tech {
   handle {
         root          * /build
         try_files {path} /index.html

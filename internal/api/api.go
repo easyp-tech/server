@@ -14,7 +14,7 @@ import (
 	registryv1alpha1connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/core"
 	"github.com/easyp-tech/server/internal/grpchelper"
-	"github.com/easyp-tech/server/internal/logkey"
+	"github.com/easyp-tech/server/internal/logger"
 	"github.com/easyp-tech/server/internal/metrics"
 )
 
@@ -39,7 +39,7 @@ func New(
 	namespace,
 	domain string,
 ) (*grpc.Server, *http.ServeMux) {
-	log := logkey.FromContext(ctx)
+	log := logger.FromContext(ctx)
 	subsystem := "api"
 
 	grpcMetrics := grpchelper.NewServerMetrics(reg, namespace, subsystem)
