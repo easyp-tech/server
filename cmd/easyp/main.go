@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,10 +16,11 @@ import (
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc/grpclog"
 
+	"github.com/easyp-tech/server/internal/logger"
+
 	"github.com/easyp-tech/server/internal/api"
 	"github.com/easyp-tech/server/internal/core"
 	"github.com/easyp-tech/server/internal/grpchelper"
-	"github.com/easyp-tech/server/internal/logkey"
 	"github.com/easyp-tech/server/internal/metrics"
 	"github.com/easyp-tech/server/internal/serve"
 	"github.com/easyp-tech/server/internal/store"
@@ -27,9 +29,8 @@ import (
 type (
 	//nolint:tagliatelle
 	config struct {
-		DevMode bool    `json:"dev_mode"`
-		Server  server  `json:"server"`
-		Store   storage `json:"storage"`
+		Server server  `json:"server"`
+		Store  storage `json:"storage"`
 	}
 	server struct {
 		External external `json:"external"`
@@ -44,8 +45,7 @@ type (
 		Port   ports  `json:"port"`
 	}
 	storage struct {
-		Root string   `json:"root"`
-		URLS []string `json:"urls"`
+		Root string `json:"root"`
 	}
 )
 
@@ -60,9 +60,9 @@ func main() {
 
 	grpclog.SetLoggerV2(grpchelper.NewLogger(log))
 
-	appName := filepath.Base(os.Args[0])
+	appName := strings.Replace(filepath.Base(os.Args[0]), "-", "_", -1)
 
-	ctxParent := logkey.NewContext(context.Background(), log)
+	ctxParent := logger.NewContext(context.Background(), log)
 
 	ctx, cancel := signal.NotifyContext(
 		ctxParent,
@@ -77,34 +77,30 @@ func main() {
 	go forceShutdown(ctx)
 
 	if err := start(ctx, cfg, appName); err != nil {
-		log.Error("shutdown", slog.String(logkey.Error, err.Error()))
+		log.Error("shutdown", slog.String(logger.Error, err.Error()))
 		os.Exit(1)
 	}
 }
 
 func start(ctx context.Context, cfg config, namespace string) error {
-	log := logkey.FromContext(ctx)
+	log := logger.FromContext(ctx)
 	reg := prometheus.NewPedanticRegistry()
 	m := metrics.New(reg, namespace)
 
-	s, err := store.New(ctx, cfg.Store.Root, cfg.Store.URLS)
-	if err != nil {
-		return fmt.Errorf("store.New: %w", err)
-	}
-
+	s := store.New(ctx, cfg.Store.Root)
 	module := core.New(s)
 	_, httpAPI := api.New(ctx, m, module, reg, namespace, cfg.Server.External.Domain)
 
 	return serve.Start( //nolint:wrapcheck
 		ctx,
 		serve.Metrics(
-			log.With(slog.String(logkey.Module, "metric")),
+			log.With(slog.String(logger.Module, "metric")),
 			cfg.Server.External.Host,
 			cfg.Server.External.Port.Metric,
 			reg,
 		),
 		serve.HTTP(
-			log.With(slog.String(logkey.Module, "gRPC-Gateway")),
+			log.With(slog.String(logger.Module, "connect")),
 			cfg.Server.External.Host,
 			cfg.Server.External.Port.Connect,
 			httpAPI,
@@ -113,7 +109,7 @@ func start(ctx context.Context, cfg config, namespace string) error {
 }
 
 func forceShutdown(ctx context.Context) {
-	log := logkey.FromContext(ctx)
+	log := logger.FromContext(ctx)
 
 	const shutdownDelay = 15 * time.Second
 

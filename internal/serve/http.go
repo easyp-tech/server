@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/exp/slog"
 
-	"github.com/easyp-tech/server/internal/logkey"
+	"github.com/easyp-tech/server/internal/logger"
 )
 
 // HTTP starts HTTP server on addr using handler logged as service.
@@ -24,7 +24,7 @@ func HTTP(log *slog.Logger, host string, port uint16, handler http.Handler) func
 
 		errc := make(chan error, 1)
 		go func() { errc <- srv.ListenAndServe() }()
-		log.Info("started", slog.String(logkey.Host, host), slog.Uint64(logkey.Port, uint64(port)))
+		log.Info("started", slog.String(logger.Host, host), slog.Uint64(logger.Port, uint64(port)))
 
 		defer log.Info("shutdown")
 

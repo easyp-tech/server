@@ -8,7 +8,7 @@ import (
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc"
 
-	"github.com/easyp-tech/server/internal/logkey"
+	"github.com/easyp-tech/server/internal/logger"
 )
 
 // GRPC starts gRPC server on addr, logged as service.
@@ -22,7 +22,7 @@ func GRPC(log *slog.Logger, host string, port uint16, srv *grpc.Server) func(con
 
 		errc := make(chan error, 1)
 		go func() { errc <- srv.Serve(ln) }()
-		log.Info("started", slog.String(logkey.Host, host), slog.Uint64(logkey.Port, uint64(port)))
+		log.Info("started", slog.String(logger.Host, host), slog.Uint64(logger.Port, uint64(port)))
 
 		defer log.Info("shutdown")
 
