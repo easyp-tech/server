@@ -132,6 +132,9 @@ func (a *api) DownloadManifestAndBlobs(
 				return errInner
 			}
 
+			if blob == nil {
+				return nil
+			}
 			manifestB.WriteString(digest)
 			blobs = append(blobs, blob)
 
