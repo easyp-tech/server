@@ -5,91 +5,54 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"path/filepath"
-	"strings"
-	"syscall"
-	"time"
 
 	"github.com/ghodss/yaml"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/exp/slog"
 	"google.golang.org/grpc/grpclog"
 
-	"github.com/easyp-tech/server/internal/logger"
-
+	"github.com/easyp-tech/server/cmd/easyp/internal/config"
 	"github.com/easyp-tech/server/internal/api"
 	"github.com/easyp-tech/server/internal/core"
 	"github.com/easyp-tech/server/internal/grpchelper"
+	"github.com/easyp-tech/server/internal/logger"
 	"github.com/easyp-tech/server/internal/metrics"
 	"github.com/easyp-tech/server/internal/serve"
 	"github.com/easyp-tech/server/internal/store"
 )
 
-type (
-	//nolint:tagliatelle
-	config struct {
-		Server server  `json:"server"`
-		Store  storage `json:"storage"`
-	}
-	server struct {
-		External external `json:"external"`
-	}
-	ports struct {
-		Connect uint16 `json:"connect"`
-		Metric  uint16 `json:"metric"`
-	}
-	external struct {
-		Domain string `json:"domain"`
-		Host   string `json:"host"`
-		Port   ports  `json:"port"`
-	}
-	storage struct {
-		Root string `json:"root"`
-	}
-)
-
 //nolint:gochecknoglobals
-var cfgFile = flag.String("cfg", "./cmd/easyp/local.config.yml", "path to config file")
+var (
+	cfgFile = flag.String("cfg", "./local.config.yml", "path to Config file")
+	debug   = flag.Bool("debug", false, "enable debug logging")
+)
 
 func main() {
 	flag.Parse()
 
-	cfg := must(readYaml[config](*cfgFile))
-	log := buildLogger()
+	cfg := must(readYaml[config.Config](*cfgFile))
+	log := buildLogger(*debug)
 
 	grpclog.SetLoggerV2(grpchelper.NewLogger(log))
 
-	appName := strings.Replace(filepath.Base(os.Args[0]), "-", "_", -1)
-
-	ctxParent := logger.NewContext(context.Background(), log)
-
-	ctx, cancel := signal.NotifyContext(
-		ctxParent,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGQUIT,
-		syscall.SIGABRT,
-		syscall.SIGTERM,
-	)
-	defer cancel()
-
-	go forceShutdown(ctx)
-
-	if err := start(ctx, cfg, appName); err != nil {
+	if err := start(context.Background(), cfg, os.Args[0], log); err != nil {
 		log.Error("shutdown", slog.String(logger.Error, err.Error()))
 		os.Exit(1)
 	}
 }
 
-func start(ctx context.Context, cfg config, namespace string) error {
-	log := logger.FromContext(ctx)
-	reg := prometheus.NewPedanticRegistry()
-	m := metrics.New(reg, namespace)
+func start(
+	ctx context.Context,
+	cfg config.Config,
+	namespace string,
+	log *slog.Logger,
+) error {
+	p := prometheus.NewPedanticRegistry()
+	m := metrics.New(p, namespace)
 
 	s := store.New(ctx, cfg.Store.Root)
 	module := core.New(s)
-	_, httpAPI := api.New(ctx, m, module, reg, namespace, cfg.Server.External.Domain)
+	_, httpAPI := api.New(ctx, m, module, p, namespace, cfg.Server.External.Domain)
 
 	return serve.Start( //nolint:wrapcheck
 		ctx,
@@ -97,7 +60,7 @@ func start(ctx context.Context, cfg config, namespace string) error {
 			log.With(slog.String(logger.Module, "metric")),
 			cfg.Server.External.Host,
 			cfg.Server.External.Port.Metric,
-			reg,
+			p,
 		),
 		serve.HTTP(
 			log.With(slog.String(logger.Module, "connect")),
@@ -108,25 +71,13 @@ func start(ctx context.Context, cfg config, namespace string) error {
 	)
 }
 
-func forceShutdown(ctx context.Context) {
-	log := logger.FromContext(ctx)
-
-	const shutdownDelay = 15 * time.Second
-
-	<-ctx.Done()
-	time.Sleep(shutdownDelay)
-
-	log.Error("failed to graceful shutdown")
-	os.Exit(1)
-}
-
-func buildLogger() *slog.Logger {
+func buildLogger(debug bool) *slog.Logger {
 	return slog.New(
 		slog.NewJSONHandler(
 			os.Stdout,
 			&slog.HandlerOptions{ //nolint:exhaustruct
 				AddSource: true,
-				Level:     slog.LevelDebug,
+				Level:     ternary(debug, slog.LevelDebug, slog.LevelInfo),
 			},
 		),
 	)
@@ -153,4 +104,12 @@ func must[T any](v T, err error) T {
 	}
 
 	return v
+}
+
+func ternary[T any](cond bool, ifTrue, ifFalse T) T {
+	if cond {
+		return ifTrue
+	}
+
+	return ifFalse
 }
