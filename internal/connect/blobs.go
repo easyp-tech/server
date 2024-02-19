@@ -3,7 +3,6 @@ package connect
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 
 	"connectrpc.com/connect"
@@ -28,11 +27,7 @@ func (a *api) DownloadManifestAndBlobs(
 
 	var manifest bytes.Buffer
 
-	blobs := must(sliceMap(files, func(_ int, v content.File) (*module.Blob, error) {
-		must(fmt.Fprintf(&manifest, "shake256:%s  %s\n", hex.EncodeToString(v.Hash[:]), v.Path))
-
-		return buildBlob(v.Hash, v.Data), nil
-	}))
+	blobs := buildBlobs(files)
 
 	manifestHash, err := shake256.SHA3Shake256(manifest.Bytes())
 	if err != nil {
@@ -53,6 +48,16 @@ func (a *api) DownloadManifestAndBlobs(
 	}, nil
 }
 
+func buildBlobs(in []content.File) []*module.Blob {
+	out := make([]*module.Blob, 0, len(in))
+
+	for _, file := range in {
+		out = append(out, buildBlob(file.Hash, file.Data))
+	}
+
+	return out
+}
+
 func buildBlob(hash shake256.Hash, data []byte) *module.Blob {
 	return &module.Blob{
 		Digest: &module.Digest{
@@ -61,27 +66,4 @@ func buildBlob(hash shake256.Hash, data []byte) *module.Blob {
 		},
 		Content: data,
 	}
-}
-
-func sliceMap[T any, R any](in []T, f func(i int, v T) (R, error)) ([]R, error) {
-	out := make([]R, 0, len(in))
-
-	for i, item := range in {
-		v, err := f(i, item)
-		if err != nil {
-			return out, fmt.Errorf("iterating %d of %d: %w", i, len(in), err)
-		}
-
-		out = append(out, v)
-	}
-
-	return out, nil
-}
-
-func must[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
-	}
-
-	return v
 }
