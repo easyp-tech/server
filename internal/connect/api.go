@@ -1,31 +1,37 @@
 package connect
 
 import (
+	"context"
 	"net/http"
 
+	"golang.org/x/exp/slog"
+
 	connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
-	"github.com/easyp-tech/server/internal/content"
+	"github.com/easyp-tech/server/internal/providers/content"
 )
 
-type application interface {
-	Get(owner, repoName, commit string) (content.Meta, error)
-	GetWithFiles(owner, repoName, commit string) (content.Meta, []content.File, error)
+type provider interface {
+	GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error)
+	GetFiles(ctx context.Context, owner, repoName, commit string) ([]content.File, error)
 }
 
 type api struct {
+	log *slog.Logger
 	connect.UnimplementedRepositoryServiceHandler
 	connect.UnimplementedResolveServiceHandler
 	connect.UnimplementedDownloadServiceHandler
-	repo   application
+	repo   provider
 	domain string
 }
 
 // New creates and returns gRPC server.
 func New(
-	core application,
+	log *slog.Logger,
+	core provider,
 	domain string,
 ) *http.ServeMux {
 	a := &api{ //nolint:exhaustruct
+		log:    log,
 		repo:   core,
 		domain: domain,
 	}

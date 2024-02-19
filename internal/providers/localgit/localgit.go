@@ -1,24 +1,27 @@
 package localgit
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"golang.org/x/exp/slices"
 
-	"github.com/easyp-tech/server/internal/content"
-	"github.com/easyp-tech/server/internal/namedlocks"
+	"github.com/easyp-tech/server/internal/providers/content"
+	"github.com/easyp-tech/server/internal/providers/filter"
+	"github.com/easyp-tech/server/internal/providers/localgit/namedlocks"
 	"github.com/easyp-tech/server/internal/shake256"
 )
 
-const minNumberOfFiles = 1024
+const (
+	minNumberOfFiles = 1024
+)
 
 type namedLocks interface {
 	Lock(name string) *namedlocks.Unlocker
@@ -26,25 +29,48 @@ type namedLocks interface {
 
 type store struct {
 	rootDir string
+	repos   []filter.Repo
 	l       namedLocks
 }
 
+func (s *store) Name() string {
+	return fmt.Sprintf("local git %q", s.rootDir)
+}
+
+func (s *store) Check(owner, repoName string) bool {
+	if s.rootDir == "" {
+		return false
+	}
+
+	fileStat, err := os.Stat(filepath.Join(s.rootDir, owner, repoName))
+	if err != nil {
+		return false
+	}
+
+	return fileStat.IsDir()
+}
+
 // New returns new instance of store.
-func New(rootDir string, l namedLocks) *store {
+func New(
+	rootDir string,
+	repos []filter.Repo,
+	l namedLocks,
+) *store {
 	return &store{
 		rootDir: rootDir,
+		repos:   repos,
 		l:       l,
 	}
 }
 
 // Get implements storage.Store.
-func (s *store) Get(owner, repoName, commit string) (content.Meta, error) {
+func (s *store) GetMeta(_ context.Context, owner, repoName, commit string) (content.Meta, error) {
 	dirName := path.Join(s.rootDir, owner, repoName)
 
 	l := s.l.Lock(dirName)
 	defer l.Unlock()
 
-	defaultBranch, commit, err := getRepo(dirName, commit)
+	defaultBranch, commit, err := getRepoSwitchedCommit(dirName, commit)
 	if err != nil {
 		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, //nolint:exhaustruct
 			fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
@@ -54,34 +80,29 @@ func (s *store) Get(owner, repoName, commit string) (content.Meta, error) {
 }
 
 // Get implements storage.Store.
-func (s *store) GetWithFiles(owner, repoName, commit string) (content.Meta, []content.File, error) {
-	dirName := path.Join(s.rootDir, owner, repoName)
+func (s *store) GetFiles(_ context.Context, owner, repoName, commit string) ([]content.File, error) {
+	var (
+		dirName = path.Join(s.rootDir, owner, repoName)
+		repo    = filter.FindRepo(owner, repoName, s.repos)
+	)
 
 	l := s.l.Lock(dirName)
 	defer l.Unlock()
 
-	defaultBranch, commit, err := getRepo(dirName, commit)
-	if err != nil {
-		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil, //nolint:exhaustruct
-			fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
+	if _, _, err := getRepoSwitchedCommit(dirName, commit); err != nil {
+		return nil, fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
-	files, err := enumerateProto(dirName)
+	files, err := enumerateProto(dirName, repo)
 	if err != nil {
-		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, files, //nolint:exhaustruct
-			fmt.Errorf("enumerating %q/%q:%q: %w", owner, repoName, commit, err)
+		return files, fmt.Errorf("enumerating %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
 	//nolint:godox
-	return content.Meta{
-		DefaultBranch: defaultBranch,
-		Commit:        commit,
-		CreatedAt:     time.Time{}, // TODO
-		UpdatedAt:     time.Time{}, // TODO
-	}, files, nil
+	return files, nil
 }
 
-func getRepo(dirName, commit string) (string, string, error) {
+func getRepoSwitchedCommit(dirName, commit string) (string, string, error) {
 	r, err := git.PlainOpen(dirName)
 	if err != nil {
 		return "", "", fmt.Errorf("opening git: %w", err)
@@ -92,7 +113,7 @@ func getRepo(dirName, commit string) (string, string, error) {
 		return "", "", fmt.Errorf("resolving default branch: %w", err)
 	}
 
-	if commit == "" {
+	if commit == "" || commit == "main" {
 		commit = defaultBranch.Hash().String()
 	}
 
@@ -108,7 +129,7 @@ func getRepo(dirName, commit string) (string, string, error) {
 	return defaultBranch.Name().Short(), commit, nil
 }
 
-func enumerateProto(dirName string) ([]content.File, error) {
+func enumerateProto(dirName string, repo filter.Repo) ([]content.File, error) {
 	res := make([]content.File, 0, minNumberOfFiles)
 
 	fsys := os.DirFS(dirName)
@@ -117,8 +138,13 @@ func enumerateProto(dirName string) ([]content.File, error) {
 		fsys,
 		".",
 		func(path string, info fs.DirEntry, err error) error {
-			if err != nil || info.IsDir() || filepath.Ext(path) != ".proto" {
+			if err != nil || info.IsDir() {
 				return nil //nolint:nilerr
+			}
+
+			newPath, ok := repo.Check(path)
+			if !ok {
+				return nil
 			}
 
 			data, err := fs.ReadFile(fsys, path)
@@ -131,7 +157,7 @@ func enumerateProto(dirName string) ([]content.File, error) {
 				return fmt.Errorf("hashing %q: %w", path, err)
 			}
 
-			res = append(res, content.File{Path: path, Data: data, Hash: hash})
+			res = append(res, content.File{Path: newPath, Data: data, Hash: hash})
 
 			return nil
 		},

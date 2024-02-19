@@ -11,13 +11,13 @@ import (
 )
 
 func (a *api) GetModulePins(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[registry.GetModulePinsRequest],
 ) (
 	*connect.Response[registry.GetModulePinsResponse],
 	error,
 ) {
-	modulePins, err := a.resolveModulePins(req.Msg.GetModuleReferences())
+	modulePins, err := a.resolveModulePins(ctx, req.Msg.GetModuleReferences())
 	if err != nil {
 		return nil, fmt.Errorf("getting repository: %w", err)
 	}
@@ -27,11 +27,11 @@ func (a *api) GetModulePins(
 	}, nil
 }
 
-func (a *api) resolveModulePins(in []*module.ModuleReference) ([]*module.ModulePin, error) {
+func (a *api) resolveModulePins(ctx context.Context, in []*module.ModuleReference) ([]*module.ModulePin, error) {
 	out := make([]*module.ModulePin, 0, len(in))
 
 	for i, m := range in {
-		v, err := a.resolveModulePin(m)
+		v, err := a.resolveModulePin(ctx, m)
 		if err != nil {
 			return out, fmt.Errorf("iterating %d of %d: %w", i, len(in), err)
 		}
@@ -42,8 +42,8 @@ func (a *api) resolveModulePins(in []*module.ModuleReference) ([]*module.ModuleP
 	return out, nil
 }
 
-func (a *api) resolveModulePin(v *module.ModuleReference) (*module.ModulePin, error) {
-	repo, err := a.repo.Get(v.GetOwner(), v.GetRepository(), v.GetReference())
+func (a *api) resolveModulePin(ctx context.Context, v *module.ModuleReference) (*module.ModulePin, error) {
+	repo, err := a.repo.GetMeta(ctx, v.GetOwner(), v.GetRepository(), v.GetReference())
 	if err != nil {
 		return nil, fmt.Errorf("resolving %q/%q:%q: %w", v.GetOwner(), v.GetRepository(), v.GetReference(), err)
 	}
