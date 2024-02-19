@@ -35,7 +35,8 @@ type store struct {
 	l       namedLocks
 }
 
-func (s *store) Find(owner, repoName string) source.Source { //nolint:ireturn
+//nolint:ireturn
+func (s *store) Find(owner, repoName string) source.Source {
 	if s.rootDir == "" {
 		return nil
 	}
