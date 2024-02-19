@@ -21,7 +21,7 @@ import (
 const minNumberOfFiles = 1024
 
 type namedLocks interface {
-	Lock(name string) namedlocks.Unlocker
+	Lock(name string) *namedlocks.Unlocker
 }
 
 type store struct {
