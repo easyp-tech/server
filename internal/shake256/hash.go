@@ -6,10 +6,10 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-const HashLen = 64
+type Hash [64]byte
 
-func SHA3Shake256(data []byte) ([HashLen]byte, error) {
-	var hash [HashLen]byte
+func SHA3Shake256(data []byte) (Hash, error) {
+	var hash Hash
 
 	d := sha3.NewShake256()
 

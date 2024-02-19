@@ -19,17 +19,21 @@ var (
 	debug   = flag.Bool("debug", false, "enable debug logging")
 )
 
+const (
+	minNumberOfRepos = 1024
+)
+
 func main() {
 	flag.Parse()
 
 	var (
 		cfg      = must(config.ReadYaml[config.Config](*cfgFile))
 		log      = buildLogger(*debug)
-		nameLock = namedlocks.New(1024)
+		nameLock = namedlocks.New(minNumberOfRepos)
 		handler  = connect.New(localgit.New(cfg.Storage, nameLock), cfg.Domain)
 	)
 
-	if err := http.ListenAndServe(cfg.Listen.String(), handler); err != nil {
+	if err := http.ListenAndServe(cfg.Listen.String(), handler); err != nil { //nolint:gosec
 		log.Error("shutdown", slog.String("error", err.Error()))
 		os.Exit(1)
 	}

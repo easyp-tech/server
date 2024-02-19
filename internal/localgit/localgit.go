@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -17,17 +18,19 @@ import (
 	"github.com/easyp-tech/server/internal/shake256"
 )
 
-type Lock interface {
+const minNumberOfFiles = 1024
+
+type namedLocks interface {
 	Lock(name string) namedlocks.Unlocker
 }
 
 type store struct {
 	rootDir string
-	l       Lock
+	l       namedLocks
 }
 
 // New returns new instance of store.
-func New(rootDir string, l Lock) *store {
+func New(rootDir string, l namedLocks) *store {
 	return &store{
 		rootDir: rootDir,
 		l:       l,
@@ -43,11 +46,11 @@ func (s *store) Get(owner, repoName, commit string) (content.Meta, error) {
 
 	defaultBranch, commit, err := getRepo(dirName, commit)
 	if err != nil {
-		return content.Meta{DefaultBranch: defaultBranch, Commit: commit},
+		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, //nolint:exhaustruct
 			fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
-	return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil
+	return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil //nolint:exhaustruct
 }
 
 // Get implements storage.Store.
@@ -59,17 +62,23 @@ func (s *store) GetWithFiles(owner, repoName, commit string) (content.Meta, []co
 
 	defaultBranch, commit, err := getRepo(dirName, commit)
 	if err != nil {
-		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil,
+		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil, //nolint:exhaustruct
 			fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
 	files, err := enumerateProto(dirName)
 	if err != nil {
-		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, files,
+		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, files, //nolint:exhaustruct
 			fmt.Errorf("enumerating %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
-	return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, files, nil
+	//nolint:godox
+	return content.Meta{
+		DefaultBranch: defaultBranch,
+		Commit:        commit,
+		CreatedAt:     time.Time{}, // TODO
+		UpdatedAt:     time.Time{}, // TODO
+	}, files, nil
 }
 
 func getRepo(dirName, commit string) (string, string, error) {
@@ -92,16 +101,15 @@ func getRepo(dirName, commit string) (string, string, error) {
 		return "", "", fmt.Errorf("getting work tree: %w", err)
 	}
 
-	if err = w.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(commit)}); err != nil {
+	if err = w.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(commit)}); err != nil { //nolint:exhaustruct
 		return "", "", fmt.Errorf("checking out %q: %w", commit, err)
 	}
 
 	return defaultBranch.Name().Short(), commit, nil
-
 }
 
 func enumerateProto(dirName string) ([]content.File, error) {
-	res := make([]content.File, 0, 1024)
+	res := make([]content.File, 0, minNumberOfFiles)
 
 	fsys := os.DirFS(dirName)
 
@@ -110,7 +118,7 @@ func enumerateProto(dirName string) ([]content.File, error) {
 		".",
 		func(path string, info fs.DirEntry, err error) error {
 			if err != nil || info.IsDir() || filepath.Ext(path) != ".proto" {
-				return nil
+				return nil //nolint:nilerr
 			}
 
 			data, err := fs.ReadFile(fsys, path)

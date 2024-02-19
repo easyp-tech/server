@@ -16,5 +16,5 @@ type Meta struct {
 type File struct {
 	Path string
 	Data []byte
-	Hash [shake256.HashLen]byte
+	Hash shake256.Hash
 }

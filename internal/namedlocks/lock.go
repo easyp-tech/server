@@ -13,7 +13,7 @@ type namedLocks struct {
 	byName map[string]*sync.Mutex
 }
 
-func (l *namedLocks) Lock(name string) Unlocker {
+func (l *namedLocks) Lock(name string) Unlocker { //nolint:ireturn
 	m := l.lock(name)
 
 	m.Lock()
@@ -36,7 +36,7 @@ func (l *namedLocks) lock(name string) *sync.Mutex {
 }
 
 func New(size int) *namedLocks {
-	return &namedLocks{
+	return &namedLocks{ //nolint:exhaustruct
 		byName: make(map[string]*sync.Mutex, size),
 	}
 }
