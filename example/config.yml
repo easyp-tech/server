@@ -1,9 +1,0 @@
-server:
-  external:
-    domain: "easyp.tech"
-    host: "0.0.0.0"
-    port:
-      connect: 8080
-      metric: 8081
-storage:
-  root: "/cache"
