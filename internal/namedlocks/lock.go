@@ -4,8 +4,12 @@ import (
 	"sync"
 )
 
-type Unlocker interface {
-	Unlock()
+type Unlocker struct {
+	m *sync.Mutex
+}
+
+func (l *Unlocker) Unlock() {
+	l.m.Unlock()
 }
 
 type namedLocks struct {
@@ -13,12 +17,12 @@ type namedLocks struct {
 	byName map[string]*sync.Mutex
 }
 
-func (l *namedLocks) Lock(name string) Unlocker { //nolint:ireturn
+func (l *namedLocks) Lock(name string) *Unlocker {
 	m := l.lock(name)
 
 	m.Lock()
 
-	return m
+	return &Unlocker{m: m}
 }
 
 func (l *namedLocks) lock(name string) *sync.Mutex {
