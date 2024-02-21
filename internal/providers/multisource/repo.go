@@ -39,13 +39,11 @@ func New(log *slog.Logger, cache fileCache, sources ...Source) Repo {
 var ErrNotFound = errors.New("not found")
 
 func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error) {
-	r.log.Debug("looking for meta", "owner", owner, "repo", repoName)
-
 	for _, s := range r.sources {
 		if s.Check(owner, repoName) {
 			r.log.Debug(
 				"module found",
-				"source", s.Name(),
+				"Source", s.Name(),
 				"owner", owner,
 				"repo", repoName,
 			)
@@ -66,7 +64,7 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 		if s.Check(owner, repoName) {
 			r.log.Debug(
 				"module found",
-				"source", s.Name(),
+				"Source", s.Name(),
 				"owner", owner,
 				"repo", repoName,
 			)

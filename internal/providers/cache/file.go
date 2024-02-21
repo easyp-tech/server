@@ -16,13 +16,11 @@ type FileCache struct {
 }
 
 func (c FileCache) Get(owner, repoName, commit string) ([]content.File, error) {
-	if c.Dir == "" {
-		return nil, nil
-	}
+	fsys := os.DirFS(c.Dir)
 
 	fullName := path.Join(c.Dir, owner, repoName, commit+".json")
 
-	data, err := os.ReadFile(fullName)
+	data, err := fs.ReadFile(fsys, fullName)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -41,10 +39,6 @@ func (c FileCache) Get(owner, repoName, commit string) ([]content.File, error) {
 }
 
 func (c FileCache) Put(owner, repoName, commit string, in []content.File) error {
-	if c.Dir == "" {
-		return nil
-	}
-
 	fullDir := path.Join(c.Dir, owner, repoName)
 
 	err := os.MkdirAll(fullDir, 0750)

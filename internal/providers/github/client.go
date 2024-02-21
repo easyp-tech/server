@@ -5,7 +5,6 @@ import (
 	"io"
 
 	"github.com/google/go-github/v59/github"
-	"golang.org/x/exp/slog"
 )
 
 const (
@@ -25,17 +24,16 @@ type Git interface {
 }
 
 type client struct {
-	log   *slog.Logger
 	repos Repositories
 	git   Git
 }
 
-func connect(log *slog.Logger, token string) client {
+func connect(token string) client {
 	c := github.NewClient(nil)
 
 	if token != "" {
 		c = c.WithAuthToken(token)
 	}
 
-	return client{log: log, repos: c.Repositories, git: c.Git}
+	return client{repos: c.Repositories, git: c.Git}
 }

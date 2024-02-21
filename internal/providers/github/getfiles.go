@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/google/go-github/v59/github"
-	"golang.org/x/exp/slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
-	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/shake256"
 )
 
@@ -19,14 +19,14 @@ func (c client) GetFiles(
 	owner string,
 	repoName string,
 	commit string,
-	repo filter.Repo,
+	prefixes []string,
 ) ([]content.File, error) {
 	tree, _, err := c.git.GetTree(ctx, owner, repoName, commit, true)
 	if err != nil {
 		return nil, fmt.Errorf("listing %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
-	files, err := c.getFiles(ctx, owner, repoName, commit, filterEntries(tree.Entries, repo))
+	files, err := c.getFiles(ctx, owner, repoName, commit, filterEntries(tree.Entries, prefixes))
 	if err != nil {
 		return files, fmt.Errorf("downloading %q/%q:%q: %w", owner, repoName, commit, err)
 	}
@@ -34,23 +34,32 @@ func (c client) GetFiles(
 	return files, nil
 }
 
-type fileFiltered struct {
-	orig string
-	name string
-}
-
-func filterEntries(entries []*github.TreeEntry, repo filter.Repo) []fileFiltered {
-	out := make([]fileFiltered, 0, len(entries))
+func filterEntries(entries []*github.TreeEntry, prefixes []string) []string {
+	out := make([]string, 0, len(entries))
 
 	for _, entry := range entries {
-		if name, ok := repo.Check(entry.GetPath()); ok {
-			out = append(out, fileFiltered{orig: entry.GetPath(), name: name})
+		if checkPath(entry.GetPath(), prefixes) {
+			out = append(out, entry.GetPath())
 		}
 	}
 
-	slices.SortFunc(out, func(a, b fileFiltered) int { return strings.Compare(a.name, b.name) })
+	sort.Strings(out)
 
 	return out
+}
+
+func checkPath(path string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return filepath.Ext(path) == ProtoSuffix
+	}
+
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(path, prefix) {
+			return filepath.Ext(path) == ProtoSuffix
+		}
+	}
+
+	return false
 }
 
 func (c client) getFiles(
@@ -58,22 +67,22 @@ func (c client) getFiles(
 	owner string,
 	repoName string,
 	commit string,
-	files []fileFiltered,
+	paths []string,
 ) ([]content.File, error) {
-	out := make([]content.File, 0, len(files))
+	out := make([]content.File, 0, len(paths))
 
-	for _, file := range files {
-		data, err := c.getFile(ctx, owner, repoName, commit, file.orig)
+	for _, path := range paths {
+		data, err := c.getFile(ctx, owner, repoName, commit, path)
 		if err != nil {
-			return nil, fmt.Errorf("downloading %q: %w", file, err)
+			return nil, fmt.Errorf("downloading %q: %w", path, err)
 		}
 
 		hash, err := shake256.SHA3Shake256(data)
 		if err != nil {
-			return nil, fmt.Errorf("hashing %q: %w", file, err)
+			return nil, fmt.Errorf("hashing %q: %w", path, err)
 		}
 
-		out = append(out, content.File{Path: file.name, Data: data, Hash: hash})
+		out = append(out, content.File{Path: path, Data: data, Hash: hash})
 	}
 
 	return out, nil

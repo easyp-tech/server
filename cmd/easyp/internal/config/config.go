@@ -5,12 +5,11 @@ import (
 )
 
 type Config struct {
-	Listen netip.AddrPort `json:"listen"`
-	Domain string         `json:"domain"`
-	TLS    TLSConfig      `json:"tls"`
-	Cache  string         `json:"cache"`
-	Proxy  Proxy          `json:"proxy"`
-	Local  LocalGit       `json:"local"`
+	Listen  netip.AddrPort `json:"listen"`
+	Domain  string         `json:"domain"`
+	Storage string         `json:"storage"`
+	TLS     TLSConfig      `json:"tls"`
+	Proxy   Proxy          `json:"proxy"`
 }
 
 type TLSConfig struct {
@@ -19,28 +18,18 @@ type TLSConfig struct {
 	CACertFile string `json:"ca"`
 }
 
-type LocalGit struct {
-	Storage string `json:"storage"`
-	Repos   []Repo `json:"repo"`
-}
-
 type Proxy struct {
+	Cache  string `json:"cache"`
 	Github Github `json:"github"`
 }
 
 type Github struct {
-	AccessToken string       `json:"token"`
-	Repos       []GithubRepo `json:"repo"`
+	Repos []GithubRepo `json:"repos"`
 }
 
 type GithubRepo struct {
-	Repo        Repo   `json:"repo"`
-	AccessToken string `json:"token"`
-}
-
-type Repo struct {
-	Owner    string   `json:"owner"`
-	Name     string   `json:"name"`
-	Prefixes []string `json:"prefix"`
-	Paths    []string `json:"path"`
+	Owner       string   `json:"owner"`
+	Name        string   `json:"name"`
+	Paths       []string `json:"paths"`
+	AccessToken string   `json:"token"`
 }

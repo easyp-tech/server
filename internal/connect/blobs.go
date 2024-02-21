@@ -26,13 +26,12 @@ func (a *api) DownloadManifestAndBlobs(
 		return nil, fmt.Errorf("a.repo.GetRepository: %w", err)
 	}
 
-	var (
-		manifest bytes.Buffer
-		blobs    = make([]*module.Blob, 0, len(files))
-	)
+	var manifest bytes.Buffer
+
+	blobs := make([]*module.Blob, 0, len(files))
 
 	for _, file := range files {
-		fmt.Fprintf(&manifest, digestFormat, file.Hash.String(), file.Path)
+		fmt.Fprintf(&manifest, digestFormat, file.Hash, file.Path)
 		blobs = append(blobs, buildBlob(file.Hash, file.Data))
 	}
 

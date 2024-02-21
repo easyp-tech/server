@@ -15,8 +15,12 @@ func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (co
 		return meta, fmt.Errorf("investigating %q/%q: %w", owner, repoName, err)
 	}
 
-	if commit != "" && commit != "main" {
+	if commit != "" {
 		meta.Commit = commit
+	}
+
+	if _, _, err = c.repos.GetCommit(ctx, owner, repoName, meta.Commit, nil); err != nil {
+		return meta, fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, meta.Commit, err)
 	}
 
 	return meta, nil
@@ -32,8 +36,6 @@ func (c client) getRepo(ctx context.Context, owner, repoName string) (content.Me
 		return out, fmt.Errorf("resolving default branch: %w", err)
 	}
 
-	c.log.Debug("found repo", "default branch", repo.GetDefaultBranch(), "created", repo.CreatedAt.GetTime(), "updated", repo.UpdatedAt.GetTime())
-
 	out.CreatedAt = safeTime(repo.CreatedAt.GetTime())
 	out.UpdatedAt = safeTime(repo.UpdatedAt.GetTime())
 
@@ -46,8 +48,6 @@ func (c client) getRepo(ctx context.Context, owner, repoName string) (content.Me
 	if err != nil {
 		return out, fmt.Errorf("investigating branch %q: %w", out.DefaultBranch, err)
 	}
-
-	c.log.Debug("found branch", "SHA", branch.GetCommit().GetSHA())
 
 	out.Commit = branch.GetCommit().GetSHA()
 
