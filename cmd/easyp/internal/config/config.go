@@ -5,11 +5,12 @@ import (
 )
 
 type Config struct {
-	Listen  netip.AddrPort `json:"listen"`
-	Domain  string         `json:"domain"`
-	Storage string         `json:"storage"`
-	TLS     TLSConfig      `json:"tls"`
-	Proxy   Proxy          `json:"proxy"`
+	Listen netip.AddrPort `json:"listen"`
+	Domain string         `json:"domain"`
+	TLS    TLSConfig      `json:"tls"`
+	Cache  string         `json:"cache"`
+	Proxy  Proxy          `json:"proxy"`
+	Local  LocalGit       `json:"local"`
 }
 
 type TLSConfig struct {
@@ -18,18 +19,31 @@ type TLSConfig struct {
 	CACertFile string `json:"ca"`
 }
 
-type Proxy struct {
-	Cache  string `json:"cache"`
-	Github Github `json:"github"`
+type LocalGit struct {
+	Storage string `json:"storage"`
+	Repos   []Repo `json:"repo"`
 }
 
-type Github struct {
-	Repos []GithubRepo `json:"repos"`
+type Proxy struct {
+	Github    []GithubRepo    `json:"github"`
+	BitBucket []BitBucketRepo `json:"bitbucket"`
 }
 
 type GithubRepo struct {
-	Owner       string   `json:"owner"`
-	Name        string   `json:"name"`
-	Paths       []string `json:"paths"`
-	AccessToken string   `json:"token"`
+	Repo        Repo   `json:"repo"`
+	AccessToken string `json:"token"`
+}
+
+type BitBucketRepo struct {
+	Repo        Repo   `json:"repo"`
+	User        string `json:"user"`
+	AccessToken string `json:"token"`
+	BaseURL     URL    `json:"url"`
+}
+
+type Repo struct {
+	Owner    string   `json:"owner"`
+	Name     string   `json:"name"`
+	Prefixes []string `json:"prefix"`
+	Paths    []string `json:"path"`
 }

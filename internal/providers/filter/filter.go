@@ -1,6 +1,8 @@
 package filter
 
 import (
+	"fmt"
+	"hash/crc32"
 	"strings"
 
 	"golang.org/x/exp/slices"
@@ -18,10 +20,14 @@ type Repo struct {
 func FindRepo(owner, repoName string, repos []Repo) Repo {
 	i := slices.IndexFunc(repos, func(repo Repo) bool { return repo.Owner == owner && repo.Name == repoName })
 	if i < 0 {
-		return Repo{}
+		return Repo{} //nolint:exhaustruct
 	}
 
 	return repos[i]
+}
+
+func (r Repo) Hash() string {
+	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r))))
 }
 
 func (r Repo) Check(fileName string) (string, bool) {

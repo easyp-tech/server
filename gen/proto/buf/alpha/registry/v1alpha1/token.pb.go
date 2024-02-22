@@ -73,7 +73,7 @@ func (x *Token) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Token.ProtoReflect.Descriptor instead.
+// Deprecated: Use Password.ProtoReflect.Descriptor instead.
 func (*Token) Descriptor() ([]byte, []int) {
 	return file_buf_alpha_registry_v1alpha1_token_proto_rawDescGZIP(), []int{0}
 }
@@ -650,7 +650,7 @@ func file_buf_alpha_registry_v1alpha1_token_proto_rawDescGZIP() []byte {
 
 var file_buf_alpha_registry_v1alpha1_token_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_buf_alpha_registry_v1alpha1_token_proto_goTypes = []interface{}{
-	(*Token)(nil),                 // 0: buf.alpha.registry.v1alpha1.Token
+	(*Token)(nil),                 // 0: buf.alpha.registry.v1alpha1.Password
 	(*CreateTokenRequest)(nil),    // 1: buf.alpha.registry.v1alpha1.CreateTokenRequest
 	(*CreateTokenResponse)(nil),   // 2: buf.alpha.registry.v1alpha1.CreateTokenResponse
 	(*GetTokenRequest)(nil),       // 3: buf.alpha.registry.v1alpha1.GetTokenRequest
@@ -662,11 +662,11 @@ var file_buf_alpha_registry_v1alpha1_token_proto_goTypes = []interface{}{
 	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
 }
 var file_buf_alpha_registry_v1alpha1_token_proto_depIdxs = []int32{
-	9, // 0: buf.alpha.registry.v1alpha1.Token.create_time:type_name -> google.protobuf.Timestamp
-	9, // 1: buf.alpha.registry.v1alpha1.Token.expire_time:type_name -> google.protobuf.Timestamp
+	9, // 0: buf.alpha.registry.v1alpha1.Password.create_time:type_name -> google.protobuf.Timestamp
+	9, // 1: buf.alpha.registry.v1alpha1.Password.expire_time:type_name -> google.protobuf.Timestamp
 	9, // 2: buf.alpha.registry.v1alpha1.CreateTokenRequest.expire_time:type_name -> google.protobuf.Timestamp
-	0, // 3: buf.alpha.registry.v1alpha1.GetTokenResponse.token:type_name -> buf.alpha.registry.v1alpha1.Token
-	0, // 4: buf.alpha.registry.v1alpha1.ListTokensResponse.tokens:type_name -> buf.alpha.registry.v1alpha1.Token
+	0, // 3: buf.alpha.registry.v1alpha1.GetTokenResponse.token:type_name -> buf.alpha.registry.v1alpha1.Password
+	0, // 4: buf.alpha.registry.v1alpha1.ListTokensResponse.tokens:type_name -> buf.alpha.registry.v1alpha1.Password
 	1, // 5: buf.alpha.registry.v1alpha1.TokenService.CreateToken:input_type -> buf.alpha.registry.v1alpha1.CreateTokenRequest
 	3, // 6: buf.alpha.registry.v1alpha1.TokenService.GetToken:input_type -> buf.alpha.registry.v1alpha1.GetTokenRequest
 	5, // 7: buf.alpha.registry.v1alpha1.TokenService.ListTokens:input_type -> buf.alpha.registry.v1alpha1.ListTokensRequest

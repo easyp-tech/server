@@ -8,18 +8,16 @@ import (
 	"golang.org/x/exp/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
+	"github.com/easyp-tech/server/internal/providers/source"
 )
 
 type Source interface {
-	Name() string
-	Check(owner, repoName string) bool
-	GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error)
-	GetFiles(ctx context.Context, owner, repoName, commit string) ([]content.File, error)
+	Find(owner, repoName string) source.Source
 }
 
 type fileCache interface {
-	Get(owner, repoName, commit string) ([]content.File, error)
-	Put(owner, repoName, commit string, in []content.File) error
+	Get(owner, repoName, commit, configHash string) ([]content.File, error)
+	Put(owner, repoName, commit, configHash string, in []content.File) error
 }
 
 type Repo struct {
@@ -39,51 +37,42 @@ func New(log *slog.Logger, cache fileCache, sources ...Source) Repo {
 var ErrNotFound = errors.New("not found")
 
 func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error) {
-	for _, s := range r.sources {
-		if s.Check(owner, repoName) {
-			r.log.Debug(
-				"module found",
-				"Source", s.Name(),
-				"owner", owner,
-				"repo", repoName,
-			)
+	r.log.Debug("looking for meta", "owner", owner, "repo", repoName)
 
-			return s.GetMeta(ctx, owner, repoName, commit)
-		}
+	s := r.findSource(owner, repoName)
+	if s == nil {
+		return content.Meta{}, ErrNotFound
 	}
 
-	return content.Meta{}, ErrNotFound
+	r.log.Debug("module found", "source", s.Name(), "config", s.ConfigHash(), "owner", owner, "repo", repoName)
+
+	return s.GetMeta(ctx, commit) //nolint:wrapcheck
 }
 
 func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]content.File, error) {
-	if files := r.cacheGet(owner, repoName, commit); files != nil {
+	s := r.findSource(owner, repoName)
+	if s == nil {
+		return nil, ErrNotFound
+	}
+
+	r.log.Debug("module found", "source", s.Name(), "config", s.ConfigHash(), "owner", owner, "repo", repoName)
+
+	if files := r.cacheGet(owner, repoName, commit, s.ConfigHash()); files != nil {
 		return files, nil
 	}
 
-	for _, s := range r.sources {
-		if s.Check(owner, repoName) {
-			r.log.Debug(
-				"module found",
-				"Source", s.Name(),
-				"owner", owner,
-				"repo", repoName,
-			)
-
-			files, err := s.GetFiles(ctx, owner, repoName, commit)
-			if err != nil {
-				return files, fmt.Errorf("getting files: %w", err)
-			}
-
-			r.cachePut(owner, repoName, commit, files)
-
-			return files, nil
-		}
+	files, err := s.GetFiles(ctx, commit)
+	if err != nil {
+		return files, fmt.Errorf("getting files: %w", err)
 	}
-	return nil, ErrNotFound
+
+	r.cachePut(owner, repoName, commit, s.ConfigHash(), files)
+
+	return files, nil
 }
 
-func (r Repo) cacheGet(owner, repoName, commit string) []content.File {
-	files, err := r.cache.Get(owner, repoName, commit)
+func (r Repo) cacheGet(owner, repoName, commit, configHash string) []content.File {
+	files, err := r.cache.Get(owner, repoName, commit, configHash)
 	if err != nil {
 		r.log.Error("from cache", "owner", owner, "repo", repoName, "commit", commit, "error", err)
 
@@ -95,8 +84,8 @@ func (r Repo) cacheGet(owner, repoName, commit string) []content.File {
 	return files
 }
 
-func (r Repo) cachePut(owner, repoName, commit string, files []content.File) {
-	if err := r.cache.Put(owner, repoName, commit, files); err != nil {
+func (r Repo) cachePut(owner, repoName, commit, configHash string, files []content.File) {
+	if err := r.cache.Put(owner, repoName, commit, configHash, files); err != nil {
 		r.log.Error(
 			"to cache",
 			"owner", owner,
@@ -110,4 +99,14 @@ func (r Repo) cachePut(owner, repoName, commit string, files []content.File) {
 	}
 
 	r.log.Debug("to cache", "owner", owner, "repo", repoName, "commit", commit, "files", len(files))
+}
+
+func (r Repo) findSource(owner, repoName string) source.Source {
+	for _, s := range r.sources {
+		if repo := s.Find(owner, repoName); repo != nil {
+			return repo
+		}
+	}
+
+	return nil
 }

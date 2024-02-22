@@ -11,7 +11,9 @@ import (
 	"github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/https"
 	"github.com/easyp-tech/server/internal/logger"
+	"github.com/easyp-tech/server/internal/providers/bitbucket"
 	"github.com/easyp-tech/server/internal/providers/cache"
+	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/providers/github"
 	"github.com/easyp-tech/server/internal/providers/localgit"
 	"github.com/easyp-tech/server/internal/providers/localgit/namedlocks"
@@ -25,7 +27,7 @@ var (
 )
 
 const (
-	minNumberOfRepos = 1024
+	minNumberOfRepos = 128
 )
 
 func main() {
@@ -35,22 +37,22 @@ func main() {
 		cfg      = must(config.ReadYaml[config.Config](*cfgFile))
 		log      = logger.New(*debug)
 		nameLock = namedlocks.New(minNumberOfRepos)
-		cache    = cache.FileCache{Dir: cfg.Proxy.Cache}
+		cache    = cache.FileCache{Dir: cfg.Cache}
 		storage  = multisource.New(
 			log,
 			cache,
-			localgit.New(cfg.Storage, nameLock),
+			localgit.New(cfg.Local.Storage, filterRepos(cfg.Local.Repos), nameLock),
+			bbProxy(log, cfg.Proxy.BitBucket),
+			githubProxy(log, cfg.Proxy.Github),
 		)
-		handler = connect.New(storage, cfg.Domain)
-		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), handler) } //nolint:gosec,wrapcheck
-
+		handler = connect.New(log, storage, cfg.Domain)
+		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), handler) } //nolint:gosec
 	)
 
 	log.Debug("started", slog.Any("config", cfg))
 
 	if cfg.TLS.CertFile != "" {
 		serve = func() error {
-			//nolint:wrapcheck
 			return https.ListenAndServe(cfg.Listen, handler, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
 		}
 	}
@@ -69,11 +71,61 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func githubProxy(defs []config.GithubRepo) multisource.Source {
+func githubProxy(log *slog.Logger, defs []config.GithubRepo) multisource.Source { //nolint:ireturn
 	repos := make([]github.Repo, 0, len(defs))
 	for _, def := range defs {
-		repos = append(repos, github.Repo{Owner: def.Owner, Name: def.Name, Token: def.AccessToken, Paths: def.Paths})
+		repos = append(
+			repos,
+			github.Repo{
+				Token: def.AccessToken,
+				Repo: filter.Repo{
+					Owner:    def.Repo.Owner,
+					Name:     def.Repo.Name,
+					Prefixes: def.Repo.Prefixes,
+					Paths:    def.Repo.Paths,
+				},
+			},
+		)
 	}
 
-	return github.NewMultiRepo(repos)
+	return github.NewMultiRepo(log, repos)
+}
+
+func bbProxy(log *slog.Logger, defs []config.BitBucketRepo) multisource.Source { //nolint:ireturn
+	repos := make([]bitbucket.Repo, 0, len(defs))
+	for _, def := range defs {
+		repos = append(
+			repos,
+			bitbucket.Repo{
+				User:     bitbucket.User(def.User),
+				Password: bitbucket.Password(def.AccessToken),
+				URL:      def.BaseURL.URL,
+				Repo: filter.Repo{
+					Owner:    def.Repo.Owner,
+					Name:     def.Repo.Name,
+					Prefixes: def.Repo.Prefixes,
+					Paths:    def.Repo.Paths,
+				},
+			},
+		)
+	}
+
+	return bitbucket.NewMultiRepo(log, repos)
+}
+
+func filterRepos(defs []config.Repo) []filter.Repo {
+	repos := make([]filter.Repo, 0, len(defs))
+	for _, def := range defs {
+		repos = append(
+			repos,
+			filter.Repo{
+				Owner:    def.Owner,
+				Name:     def.Name,
+				Prefixes: def.Prefixes,
+				Paths:    def.Paths,
+			},
+		)
+	}
+
+	return repos
 }

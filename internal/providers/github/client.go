@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/google/go-github/v59/github"
+	"golang.org/x/exp/slog"
 )
 
 const (
@@ -12,6 +13,7 @@ const (
 	MaxRedirects = 1024
 )
 
+//nolint:lll
 type Repositories interface {
 	GetCommit(ctx context.Context, owner, repo, sha string, opts *github.ListOptions) (*github.RepositoryCommit, *github.Response, error)
 	Get(ctx context.Context, owner, repo string) (*github.Repository, *github.Response, error)
@@ -19,21 +21,23 @@ type Repositories interface {
 	DownloadContents(ctx context.Context, owner, repo, filepath string, opts *github.RepositoryContentGetOptions) (io.ReadCloser, *github.Response, error)
 }
 
+//nolint:lll
 type Git interface {
 	GetTree(ctx context.Context, owner string, repo string, sha string, recursive bool) (*github.Tree, *github.Response, error)
 }
 
 type client struct {
+	log   *slog.Logger
 	repos Repositories
 	git   Git
 }
 
-func connect(token string) client {
+func connect(log *slog.Logger, token string) client {
 	c := github.NewClient(nil)
 
 	if token != "" {
 		c = c.WithAuthToken(token)
 	}
 
-	return client{repos: c.Repositories, git: c.Git}
+	return client{log: log, repos: c.Repositories, git: c.Git}
 }

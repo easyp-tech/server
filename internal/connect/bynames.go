@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"path/filepath"
+	"strings"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -29,6 +29,23 @@ func (a *api) GetRepositoriesByFullName(
 	}, nil
 }
 
+func (a *api) GetRepositoryByFullName(
+	ctx context.Context,
+	req *connect.Request[registry.GetRepositoryByFullNameRequest],
+) (
+	*connect.Response[registry.GetRepositoryByFullNameResponse],
+	error,
+) {
+	repository, err := a.resolveRepoByFullName(ctx, req.Msg.GetFullName())
+	if err != nil {
+		return nil, fmt.Errorf("getting repositories: %w", err)
+	}
+
+	return &connect.Response[registry.GetRepositoryByFullNameResponse]{
+		Msg: &registry.GetRepositoryByFullNameResponse{Repository: repository}, //nolint:exhaustruct
+	}, nil
+}
+
 func (a *api) resolveReposByFullNames(ctx context.Context, in []string) ([]*registry.Repository, error) {
 	out := make([]*registry.Repository, 0, len(in))
 
@@ -45,7 +62,7 @@ func (a *api) resolveReposByFullNames(ctx context.Context, in []string) ([]*regi
 }
 
 func (a *api) resolveRepoByFullName(ctx context.Context, name string) (*registry.Repository, error) {
-	owner, repositoryName := filepath.Split(name)
+	owner, repositoryName := splitRepoName(name)
 
 	repo, err := a.repo.GetMeta(ctx, owner, repositoryName, "")
 	if err != nil {
@@ -65,4 +82,10 @@ func (a *api) resolveRepoByFullName(ctx context.Context, name string) (*registry
 		Url:           path.Join(a.domain, owner, repositoryName),
 		DefaultBranch: repo.DefaultBranch,
 	}, nil
+}
+
+func splitRepoName(name string) (string, string) {
+	fields := strings.Split(name, "/")
+
+	return fields[0], fields[1]
 }

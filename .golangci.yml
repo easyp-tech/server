@@ -2,14 +2,6 @@ run:
   timeout: 5m
   # include test files
   tests: true
-  # skipping non-go dirs
-  skip-dirs:
-    - bin
-    - config
-    - debian
-    - docs
-    - scripts
-    - tests
 
 linters:
   enable-all: true
@@ -30,26 +22,39 @@ linters:
   fast: false
 
 issues:
+  # skipping non-go dirs
+  exclude-dirs:
+    - bin
+    - config
+    - debian
+    - docs
+    - scripts
+    - tests
   include:
     - EXC0001 # Check return values of os funcs
     - EXC0004 # govet
     - EXC0005 # C-style breaks
-  exclude:
 
   exclude-rules:
     - linters:
         - ireturn
       text: "returns generic interface"
+
     - linters:
         - lll
       source: "^//go:generate "
+
+    - linters:
+        - errcheck
+      source: "defer\\s+[^\\s]+.Close()"
+
     - linters:
         - revive
       text: "unexported-return: exported func .+ returns unexported type .+, which can be annoying to use"
+
     - path: cmd/[^/]+/.+\.go
       text: exitAfterDefer
-      liners:
-        - gocritic
+
     # Exclude some linters from running on tests files.
     - path: _test\.go
       linters:
