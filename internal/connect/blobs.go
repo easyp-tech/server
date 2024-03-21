@@ -9,25 +9,32 @@ import (
 
 	module "github.com/easyp-tech/server/gen/proto/buf/alpha/module/v1alpha1"
 	registry "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
-	"github.com/easyp-tech/server/internal/content"
 	"github.com/easyp-tech/server/internal/shake256"
 )
 
+const digestFormat = "shake256:%s  %s\n"
+
 func (a *api) DownloadManifestAndBlobs(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[registry.DownloadManifestAndBlobsRequest],
 ) (
 	*connect.Response[registry.DownloadManifestAndBlobsResponse],
 	error,
 ) {
-	_, files, err := a.repo.GetWithFiles(req.Msg.GetOwner(), req.Msg.GetRepository(), req.Msg.GetReference())
+	files, err := a.repo.GetFiles(ctx, req.Msg.GetOwner(), req.Msg.GetRepository(), req.Msg.GetReference())
 	if err != nil {
 		return nil, fmt.Errorf("a.repo.GetRepository: %w", err)
 	}
 
-	var manifest bytes.Buffer
+	var (
+		manifest bytes.Buffer
+		blobs    = make([]*module.Blob, 0, len(files))
+	)
 
-	blobs := buildBlobs(files)
+	for _, file := range files {
+		fmt.Fprintf(&manifest, digestFormat, file.Hash.String(), file.Path)
+		blobs = append(blobs, buildBlob(file.Hash, file.Data))
+	}
 
 	manifestHash, err := shake256.SHA3Shake256(manifest.Bytes())
 	if err != nil {
@@ -46,16 +53,6 @@ func (a *api) DownloadManifestAndBlobs(
 			Blobs: blobs,
 		},
 	}, nil
-}
-
-func buildBlobs(in []content.File) []*module.Blob {
-	out := make([]*module.Blob, 0, len(in))
-
-	for _, file := range in {
-		out = append(out, buildBlob(file.Hash, file.Data))
-	}
-
-	return out
 }
 
 func buildBlob(hash shake256.Hash, data []byte) *module.Blob {

@@ -13,11 +13,11 @@ func New(debug bool) *slog.Logger {
 	}
 
 	return slog.New(
-		slog.NewJSONHandler(
+		slog.NewTextHandler(
 			os.Stdout,
 			&slog.HandlerOptions{ //nolint:exhaustruct
-				AddSource: true,
-				Level:     level,
+				// AddSource: true,
+				Level: level,
 			},
 		),
 	)

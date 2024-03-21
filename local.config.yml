@@ -1,7 +1,48 @@
 listen:  127.0.0.1:8080
-domain:  localhost
-storage: ./cache
+domain:  some-proper-url:8080
+#cache: ./.storage/.cache
 tls:
-  cert: ./testdata/cert.pem
-  key:  ./testdata/key.pem
-  ca:   ./testdata/cert.pem
+  cert: cert.pem
+  key:  key.pem
+  #ca:   ca.pem
+proxy:
+  github:
+    token: some_github_token
+    repo:
+      - token: some_github_token
+        repo:
+          owner: googleapis
+          name:  googleapis
+          path:
+            - google/type/
+            - google/api/
+            - google/rpc/
+      - token: some_github_token
+        repo:
+          owner: bufbuild
+          name:  protovalidate
+          prefix:
+            - proto/protovalidate/
+      - token: some_github_token
+        repo:
+          owner: grpc-ecosystem
+          name:  grpc-gateway
+          path:
+            - protoc-gen-openapiv2/
+local:
+  #storage: ./.storage/gitlocal
+  repo:
+    - owner: googleapis
+      name:  googleapis
+      path:
+        - google/type/
+        - google/api/
+        - google/rpc/
+    - owner: bufbuild
+      name:  protovalidate
+      prefix:
+        - proto/protovalidate/
+    - owner: grpc-ecosystem
+      name:  grpc-gateway
+      path:
+        - protoc-gen-openapiv2/

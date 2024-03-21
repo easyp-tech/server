@@ -1,12 +1,22 @@
 package shake256
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"golang.org/x/crypto/sha3"
 )
 
 type Hash [64]byte
+
+func (h *Hash) String() string               { return hex.EncodeToString(h[:]) }
+func (h *Hash) MarshalText() ([]byte, error) { return []byte(hex.EncodeToString(h[:])), nil }
+
+func (h *Hash) UnmarshalText(text []byte) error {
+	_, err := hex.Decode(h[:], text)
+
+	return err
+}
 
 func SHA3Shake256(data []byte) (Hash, error) {
 	var hash Hash
