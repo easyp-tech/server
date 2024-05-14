@@ -6,8 +6,7 @@ import (
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
-type Noop struct {
-}
+type Noop struct{}
 
 func (c Noop) Get(_ context.Context, _, _, _, _ string) ([]content.File, error) {
 	return nil, nil

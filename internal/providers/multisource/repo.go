@@ -100,7 +100,7 @@ func (r Repo) cachePut(ctx context.Context, owner, repoName, commit, configHash 
 	r.log.Debug("to cache", "owner", owner, "repo", repoName, "commit", commit, "files", len(files))
 }
 
-func (r Repo) findSource(owner, repoName string) source.Source {
+func (r Repo) findSource(owner, repoName string) source.Source { //nolint:ireturn
 	for _, s := range r.sources {
 		if repo := s.Find(owner, repoName); repo != nil {
 			return repo

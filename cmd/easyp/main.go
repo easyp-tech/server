@@ -131,7 +131,7 @@ func filterRepos(defs []config.Repo) []filter.Repo {
 	return repos
 }
 
-func buildCache(log *slog.Logger, cfg config.Cache) multisource.Cache {
+func buildCache(log *slog.Logger, cfg config.Cache) multisource.Cache { //nolint:ireturn
 	switch cfg.Type {
 	case cachetype.None:
 		return cache.Noop{}
