@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"hash/crc32"
+	"log/slog"
 
 	"golang.org/x/exp/slices"
-	"golang.org/x/exp/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"

@@ -2,9 +2,8 @@ package connect
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
-
-	"golang.org/x/exp/slog"
 
 	connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"

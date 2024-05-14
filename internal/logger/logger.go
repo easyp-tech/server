@@ -1,9 +1,8 @@
 package logger
 
 import (
+	"log/slog"
 	"os"
-
-	"golang.org/x/exp/slog"
 )
 
 func New(debug bool) *slog.Logger {

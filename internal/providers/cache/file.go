@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,11 +12,11 @@ import (
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
-type FileCache struct {
+type Local struct {
 	Dir string
 }
 
-func (c FileCache) Get(owner, repoName, commit, configHash string) ([]content.File, error) {
+func (c Local) Get(_ context.Context, owner, repoName, commit, configHash string) ([]content.File, error) {
 	if c.Dir == "" {
 		return nil, nil
 	}
@@ -40,7 +41,7 @@ func (c FileCache) Get(owner, repoName, commit, configHash string) ([]content.Fi
 	return out, nil
 }
 
-func (c FileCache) Put(owner, repoName, commit, configHash string, in []content.File) error {
+func (c Local) Put(_ context.Context, owner, repoName, commit, configHash string, in []content.File) error {
 	if c.Dir == "" {
 		return nil
 	}

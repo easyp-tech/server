@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"text/template"
-
-	"golang.org/x/exp/slog"
 )
 
 type client struct {
