@@ -13,6 +13,7 @@ const (
 	MaxRedirects = 1024
 )
 
+//nolint:lll
 type Repositories interface {
 	GetCommit(ctx context.Context, owner, repo, sha string, opts *github.ListOptions) (*github.RepositoryCommit, *github.Response, error)
 	Get(ctx context.Context, owner, repo string) (*github.Repository, *github.Response, error)
@@ -20,6 +21,7 @@ type Repositories interface {
 	DownloadContents(ctx context.Context, owner, repo, filepath string, opts *github.RepositoryContentGetOptions) (io.ReadCloser, *github.Response, error)
 }
 
+//nolint:lll
 type Git interface {
 	GetTree(ctx context.Context, owner string, repo string, sha string, recursive bool) (*github.Tree, *github.Response, error)
 }

@@ -3,6 +3,7 @@ package localgit
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"io/fs"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/providers/localgit/namedlocks"
+	"github.com/easyp-tech/server/internal/providers/source"
 	"github.com/easyp-tech/server/internal/shake256"
 )
 
@@ -33,8 +35,29 @@ type store struct {
 	l       namedLocks
 }
 
-func (s *store) Name() string {
-	return fmt.Sprintf("local git %q", s.rootDir)
+func (s *store) Find(owner, repoName string) source.Source { //nolint:ireturn
+	if s.rootDir == "" {
+		return nil
+	}
+
+	dirName := path.Join(s.rootDir, owner, repoName)
+
+	fileStat, err := os.Stat(filepath.Join(s.rootDir, owner, repoName))
+	if err != nil || !fileStat.IsDir() {
+		return nil
+	}
+
+	repo := filter.FindRepo(owner, repoName, s.repos)
+
+	if repo.Owner != owner {
+		return nil
+	}
+
+	return sourceRepo{
+		dirName: dirName,
+		repo:    repo,
+		l:       s.l,
+	}
 }
 
 func (s *store) Check(owner, repoName string) bool {
@@ -63,42 +86,46 @@ func New(
 	}
 }
 
-// Get implements storage.Store.
-func (s *store) GetMeta(_ context.Context, owner, repoName, commit string) (content.Meta, error) {
-	dirName := path.Join(s.rootDir, owner, repoName)
+var _ source.Source = sourceRepo{} //nolint:exhaustruct
 
-	l := s.l.Lock(dirName)
+type sourceRepo struct {
+	dirName string
+	repo    filter.Repo
+	l       namedLocks
+}
+
+func (r sourceRepo) ConfigHash() string {
+	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo))))
+}
+
+func (r sourceRepo) Name() string { return "local git" }
+
+func (r sourceRepo) GetMeta(_ context.Context, commit string) (content.Meta, error) {
+	l := r.l.Lock(r.dirName)
 	defer l.Unlock()
 
-	defaultBranch, commit, err := getRepoSwitchedCommit(dirName, commit)
+	defaultBranch, commit, err := getRepoSwitchedCommit(r.dirName, commit)
 	if err != nil {
 		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, //nolint:exhaustruct
-			fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
+			fmt.Errorf("investigating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, commit, err)
 	}
 
 	return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil //nolint:exhaustruct
 }
 
-// Get implements storage.Store.
-func (s *store) GetFiles(_ context.Context, owner, repoName, commit string) ([]content.File, error) {
-	var (
-		dirName = path.Join(s.rootDir, owner, repoName)
-		repo    = filter.FindRepo(owner, repoName, s.repos)
-	)
-
-	l := s.l.Lock(dirName)
+func (r sourceRepo) GetFiles(_ context.Context, commit string) ([]content.File, error) {
+	l := r.l.Lock(r.dirName)
 	defer l.Unlock()
 
-	if _, _, err := getRepoSwitchedCommit(dirName, commit); err != nil {
-		return nil, fmt.Errorf("investigating %q/%q:%q: %w", owner, repoName, commit, err)
+	if _, _, err := getRepoSwitchedCommit(r.dirName, commit); err != nil {
+		return nil, fmt.Errorf("investigating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, commit, err)
 	}
 
-	files, err := enumerateProto(dirName, repo)
+	files, err := enumerateProto(r.dirName, r.repo)
 	if err != nil {
-		return files, fmt.Errorf("enumerating %q/%q:%q: %w", owner, repoName, commit, err)
+		return files, fmt.Errorf("enumerating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, commit, err)
 	}
 
-	//nolint:godox
 	return files, nil
 }
 

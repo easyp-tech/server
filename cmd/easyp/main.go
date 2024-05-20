@@ -11,6 +11,7 @@ import (
 	"github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/https"
 	"github.com/easyp-tech/server/internal/logger"
+	"github.com/easyp-tech/server/internal/providers/bitbucket"
 	"github.com/easyp-tech/server/internal/providers/cache"
 	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/providers/github"
@@ -41,17 +42,17 @@ func main() {
 			log,
 			cache,
 			localgit.New(cfg.Local.Storage, filterRepos(cfg.Local.Repos), nameLock),
+			bbProxy(log, cfg.Proxy.BitBucket),
 			githubProxy(log, cfg.Proxy.Github),
 		)
 		handler = connect.New(log, storage, cfg.Domain)
-		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), handler) } //nolint:gosec,wrapcheck
+		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), handler) } //nolint:gosec
 	)
 
 	log.Debug("started", slog.Any("config", cfg))
 
 	if cfg.TLS.CertFile != "" {
 		serve = func() error {
-			//nolint:wrapcheck
 			return https.ListenAndServe(cfg.Listen, handler, cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
 		}
 	}
@@ -70,13 +71,13 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func githubProxy(log *slog.Logger, defs config.Github) multisource.Source {
-	repos := make([]github.Repo, 0, len(defs.Repos))
-	for _, def := range defs.Repos {
+func githubProxy(log *slog.Logger, defs []config.GithubRepo) multisource.Source { //nolint:ireturn
+	repos := make([]github.Repo, 0, len(defs))
+	for _, def := range defs {
 		repos = append(
 			repos,
 			github.Repo{
-				Token: ternary(def.AccessToken != "", def.AccessToken, defs.AccessToken),
+				Token: def.AccessToken,
 				Repo: filter.Repo{
 					Owner:    def.Repo.Owner,
 					Name:     def.Repo.Name,
@@ -87,7 +88,29 @@ func githubProxy(log *slog.Logger, defs config.Github) multisource.Source {
 		)
 	}
 
-	return github.NewMultiRepo(log, repos, defs.AccessToken)
+	return github.NewMultiRepo(log, repos)
+}
+
+func bbProxy(log *slog.Logger, defs []config.BitBucketRepo) multisource.Source { //nolint:ireturn
+	repos := make([]bitbucket.Repo, 0, len(defs))
+	for _, def := range defs {
+		repos = append(
+			repos,
+			bitbucket.Repo{
+				User:     bitbucket.User(def.User),
+				Password: bitbucket.Password(def.AccessToken),
+				URL:      def.BaseURL.URL,
+				Repo: filter.Repo{
+					Owner:    def.Repo.Owner,
+					Name:     def.Repo.Name,
+					Prefixes: def.Repo.Prefixes,
+					Paths:    def.Repo.Paths,
+				},
+			},
+		)
+	}
+
+	return bitbucket.NewMultiRepo(log, repos)
 }
 
 func filterRepos(defs []config.Repo) []filter.Repo {
@@ -105,12 +128,4 @@ func filterRepos(defs []config.Repo) []filter.Repo {
 	}
 
 	return repos
-}
-
-func ternary[T any](cond bool, ifTrue, ifFalse T) T {
-	if cond {
-		return ifTrue
-	}
-
-	return ifFalse
 }

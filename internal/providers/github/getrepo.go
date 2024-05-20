@@ -25,14 +25,20 @@ func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (co
 var ErrEmpty = errors.New("empty")
 
 func (c client) getRepo(ctx context.Context, owner, repoName string) (content.Meta, error) {
-	out := content.Meta{}
+	var out content.Meta
 
 	repo, _, err := c.repos.Get(ctx, owner, repoName)
 	if err != nil {
 		return out, fmt.Errorf("resolving default branch: %w", err)
 	}
 
-	c.log.Debug("found repo", "default branch", repo.GetDefaultBranch(), "created", repo.CreatedAt.GetTime(), "updated", repo.UpdatedAt.GetTime())
+	c.log.Debug(
+		"found repo",
+		"default branch",
+		repo.GetDefaultBranch(),
+		"created", repo.CreatedAt.GetTime(),
+		"updated", repo.UpdatedAt.GetTime(),
+	)
 
 	out.CreatedAt = safeTime(repo.CreatedAt.GetTime())
 	out.UpdatedAt = safeTime(repo.UpdatedAt.GetTime())

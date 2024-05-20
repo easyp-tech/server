@@ -25,17 +25,20 @@ type LocalGit struct {
 }
 
 type Proxy struct {
-	Github Github `json:"github"`
-}
-
-type Github struct {
-	AccessToken string       `json:"token"`
-	Repos       []GithubRepo `json:"repo"`
+	Github    []GithubRepo    `json:"github"`
+	BitBucket []BitBucketRepo `json:"bitbucket"`
 }
 
 type GithubRepo struct {
 	Repo        Repo   `json:"repo"`
 	AccessToken string `json:"token"`
+}
+
+type BitBucketRepo struct {
+	Repo        Repo   `json:"repo"`
+	User        string `json:"user"`
+	AccessToken string `json:"token"`
+	BaseURL     URL    `json:"url"`
 }
 
 type Repo struct {

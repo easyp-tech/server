@@ -13,9 +13,11 @@ func (h *Hash) String() string               { return hex.EncodeToString(h[:]) }
 func (h *Hash) MarshalText() ([]byte, error) { return []byte(hex.EncodeToString(h[:])), nil }
 
 func (h *Hash) UnmarshalText(text []byte) error {
-	_, err := hex.Decode(h[:], text)
+	if _, err := hex.Decode(h[:], text); err != nil {
+		return fmt.Errorf("unmarshaling: %w", err)
+	}
 
-	return err
+	return nil
 }
 
 func SHA3Shake256(data []byte) (Hash, error) {

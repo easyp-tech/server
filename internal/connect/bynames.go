@@ -42,7 +42,7 @@ func (a *api) GetRepositoryByFullName(
 	}
 
 	return &connect.Response[registry.GetRepositoryByFullNameResponse]{
-		Msg: &registry.GetRepositoryByFullNameResponse{Repository: repository},
+		Msg: &registry.GetRepositoryByFullNameResponse{Repository: repository}, //nolint:exhaustruct
 	}, nil
 }
 

@@ -15,12 +15,12 @@ type FileCache struct {
 	Dir string
 }
 
-func (c FileCache) Get(owner, repoName, commit string) ([]content.File, error) {
+func (c FileCache) Get(owner, repoName, commit, configHash string) ([]content.File, error) {
 	if c.Dir == "" {
 		return nil, nil
 	}
 
-	fullName := path.Join(c.Dir, owner, repoName, commit+".json")
+	fullName := path.Join(c.Dir, owner, repoName, configHash, commit+".json")
 
 	data, err := os.ReadFile(fullName)
 	if err != nil {
@@ -33,21 +33,21 @@ func (c FileCache) Get(owner, repoName, commit string) ([]content.File, error) {
 
 	var out []content.File
 
-	if err = json.Unmarshal(data, &out); err != nil {
+	if err = json.Unmarshal(data, &out); err != nil { //nolint:musttag
 		return nil, fmt.Errorf("decoding %q: %w", fullName, err)
 	}
 
 	return out, nil
 }
 
-func (c FileCache) Put(owner, repoName, commit string, in []content.File) error {
+func (c FileCache) Put(owner, repoName, commit, configHash string, in []content.File) error {
 	if c.Dir == "" {
 		return nil
 	}
 
-	fullDir := path.Join(c.Dir, owner, repoName)
+	fullDir := path.Join(c.Dir, owner, repoName, configHash)
 
-	err := os.MkdirAll(fullDir, 0750)
+	err := os.MkdirAll(fullDir, 0o750) //nolint:gomnd
 	if err != nil {
 		return fmt.Errorf("creating dir %q: %w", fullDir, err)
 	}
@@ -67,7 +67,7 @@ func (c FileCache) Put(owner, repoName, commit string, in []content.File) error 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 
-	if err = encoder.Encode(in); err != nil {
+	if err = encoder.Encode(in); err != nil { //nolint:musttag
 		return fmt.Errorf("writing %q: %w", tmpName, err)
 	}
 

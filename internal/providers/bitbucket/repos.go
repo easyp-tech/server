@@ -1,9 +1,10 @@
-package github
+package bitbucket
 
 import (
 	"context"
 	"fmt"
 	"hash/crc32"
+	"net/url"
 
 	"golang.org/x/exp/slices"
 	"golang.org/x/exp/slog"
@@ -13,8 +14,16 @@ import (
 	"github.com/easyp-tech/server/internal/providers/source"
 )
 
+type (
+	User     string
+	Password string
+	Project  string
+)
+
 type Repo struct {
-	Token string
+	User     User
+	Password Password
+	URL      url.URL
 	filter.Repo
 }
 
@@ -61,12 +70,14 @@ func (r sourceRepo) ConfigHash() string {
 	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo.Repo))))
 }
 
-func (r sourceRepo) Name() string { return "github proxy" }
+func (r sourceRepo) Name() string { return "bitbucket proxy" }
 
 func (r sourceRepo) GetMeta(ctx context.Context, commit string) (content.Meta, error) {
-	return connect(r.log, r.repo.Token).GetMeta(ctx, r.repo.Owner, r.repo.Name, commit)
+	return connect(r.log, r.repo.User, r.repo.Password, r.repo.URL.String()).
+		getMeta(ctx, commit)
 }
 
 func (r sourceRepo) GetFiles(ctx context.Context, commit string) ([]content.File, error) {
-	return connect(r.log, r.repo.Token).GetFiles(ctx, r.repo.Owner, r.repo.Name, commit, r.repo.Repo)
+	return connect(r.log, r.repo.User, r.repo.Password, r.repo.URL.String()).
+		GetFiles(ctx, commit, r.repo.Repo)
 }
