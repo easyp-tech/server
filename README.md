@@ -44,7 +44,7 @@ Create a service configuration file, replace easyp.tech with your domain:
 listen:  127.0.0.1:8080
 
 # domain the service will be accessible.
-# Note: buf requires TLS, so this is a name your cert isassigned.
+# Note: buf requires TLS, so this is a name your cert is assigned.
 domain:  easyp.tech:8080
 
 # directory where the cache will be placed.
@@ -167,6 +167,13 @@ proxy:
         name:  grpc-gateway
         path:
           - protoc-gen-openapiv2/
+```
+
+Note that config values can be set to env vars. Easyp will attempt to substitute them with the values from the current environment. If variable is unset, it will be replaced with an empty string. Example:
+
+```yaml
+# address the service will be listening
+listen: ${EASYP_LISTEN}
 ```
 
 #### `buf` configuration 

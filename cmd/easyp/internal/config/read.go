@@ -15,7 +15,8 @@ func ReadYaml[T any](fileName string) (T, error) {
 		return *dst, fmt.Errorf("reading %q: %w", fileName, err)
 	}
 
-	if err = yaml.Unmarshal(data, dst); err != nil {
+	replaced := os.ExpandEnv(string(data))
+	if err = yaml.Unmarshal([]byte(replaced), dst); err != nil {
 		return *dst, fmt.Errorf("parsing %q: %w", fileName, err)
 	}
 
