@@ -15,18 +15,18 @@ type Source interface {
 	Find(owner, repoName string) source.Source
 }
 
-type fileCache interface {
-	Get(owner, repoName, commit, configHash string) ([]content.File, error)
-	Put(owner, repoName, commit, configHash string, in []content.File) error
+type Cache interface {
+	Get(ctx context.Context, owner, repoName, commit, configHash string) ([]content.File, error)
+	Put(ctx context.Context, owner, repoName, commit, configHash string, in []content.File) error
 }
 
 type Repo struct {
 	log     *slog.Logger
-	cache   fileCache
+	cache   Cache
 	sources []Source
 }
 
-func New(log *slog.Logger, cache fileCache, sources ...Source) Repo {
+func New(log *slog.Logger, cache Cache, sources ...Source) Repo {
 	return Repo{
 		log:     log,
 		cache:   cache,
@@ -57,7 +57,7 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 
 	r.log.Debug("module found", "source", s.Name(), "config", s.ConfigHash(), "owner", owner, "repo", repoName)
 
-	if files := r.cacheGet(owner, repoName, commit, s.ConfigHash()); files != nil {
+	if files := r.cacheGet(ctx, owner, repoName, commit, s.ConfigHash()); files != nil {
 		return files, nil
 	}
 
@@ -66,13 +66,13 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 		return files, fmt.Errorf("getting files: %w", err)
 	}
 
-	r.cachePut(owner, repoName, commit, s.ConfigHash(), files)
+	r.cachePut(ctx, owner, repoName, commit, s.ConfigHash(), files)
 
 	return files, nil
 }
 
-func (r Repo) cacheGet(owner, repoName, commit, configHash string) []content.File {
-	files, err := r.cache.Get(owner, repoName, commit, configHash)
+func (r Repo) cacheGet(ctx context.Context, owner, repoName, commit, configHash string) []content.File {
+	files, err := r.cache.Get(ctx, owner, repoName, commit, configHash)
 	if err != nil {
 		r.log.Error("from cache", "owner", owner, "repo", repoName, "commit", commit, "error", err)
 
@@ -84,8 +84,8 @@ func (r Repo) cacheGet(owner, repoName, commit, configHash string) []content.Fil
 	return files
 }
 
-func (r Repo) cachePut(owner, repoName, commit, configHash string, files []content.File) {
-	if err := r.cache.Put(owner, repoName, commit, configHash, files); err != nil {
+func (r Repo) cachePut(ctx context.Context, owner, repoName, commit, configHash string, files []content.File) {
+	if err := r.cache.Put(ctx, owner, repoName, commit, configHash, files); err != nil {
 		r.log.Error(
 			"to cache",
 			"owner", owner,
@@ -101,7 +101,7 @@ func (r Repo) cachePut(owner, repoName, commit, configHash string, files []conte
 	r.log.Debug("to cache", "owner", owner, "repo", repoName, "commit", commit, "files", len(files))
 }
 
-func (r Repo) findSource(owner, repoName string) source.Source {
+func (r Repo) findSource(owner, repoName string) source.Source { //nolint:ireturn
 	for _, s := range r.sources {
 		if repo := s.Find(owner, repoName); repo != nil {
 			return repo

@@ -8,11 +8,13 @@ import (
 	"golang.org/x/exp/slog"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/config"
+	"github.com/easyp-tech/server/cmd/easyp/internal/config/cachetype"
 	"github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/https"
 	"github.com/easyp-tech/server/internal/logger"
 	"github.com/easyp-tech/server/internal/providers/bitbucket"
 	"github.com/easyp-tech/server/internal/providers/cache"
+	"github.com/easyp-tech/server/internal/providers/cache/artifactory"
 	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/providers/github"
 	"github.com/easyp-tech/server/internal/providers/localgit"
@@ -37,7 +39,7 @@ func main() {
 		cfg      = must(config.ReadYaml[config.Config](*cfgFile))
 		log      = logger.New(*debug)
 		nameLock = namedlocks.New(minNumberOfRepos)
-		cache    = cache.FileCache{Dir: cfg.Cache}
+		cache    = buildCache(log, cfg.Cache)
 		storage  = multisource.New(
 			log,
 			cache,
@@ -128,4 +130,22 @@ func filterRepos(defs []config.Repo) []filter.Repo {
 	}
 
 	return repos
+}
+
+func buildCache(log *slog.Logger, cfg config.Cache) multisource.Cache { //nolint:ireturn
+	switch cfg.Type {
+	case cachetype.None:
+		return cache.Noop{}
+	case cachetype.Local:
+		return cache.Local{Dir: cfg.Local.Dir}
+	case cachetype.Artifactory:
+		return artifactory.New(
+			log,
+			cfg.Artifactory.BaseURL.String(),
+			cfg.Artifactory.User,
+			cfg.Artifactory.AccessToken,
+		)
+	default:
+		panic("unreachable reached")
+	}
 }

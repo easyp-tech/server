@@ -47,11 +47,22 @@ listen:  127.0.0.1:8080
 # Note: buf requires TLS, so this is a name your cert is assigned.
 domain:  easyp.tech:8080
 
-# directory where the cache will be placed.
-# Note: googleapis downloading take about 40 sec,
-# so cache might be considered useful.
-# Empty/unset cache means no caching.
-cache: ./.storage/.cache
+# Cache configuration
+cache:
+  # Cache type: none | local | artifactory
+  # none means no cache, local means caching in the local directory
+  # artifactory - surprise - means cache placed on the artifactory server
+  # local/artifactory are configured with the corresponding sections below
+  # Note: googleapis downloading from GitHub take about 40 sec,
+  # so cache might be considered useful.
+  type: none
+  local:
+    # directory where the cache will be placed.
+    directory: ./.storage/.cache
+  artifactory:
+    token: some_artifactory_access_token
+    user:  some_username
+    url:   https://some.artifactory.url/with/read/write/access
 
 # TLS config, required by buf.
 tls:
@@ -99,7 +110,8 @@ proxy:
     # You can go without token, but access rate will be really limited.
     # BitBucket repos are the second priority.
     - token: some_bitbucket_access_token
-      user: some_username
+      user:  some_username
+      url:   https://some.bitbucket.url/repo/is/accessible
       # Repository details
       repo:
         owner: googleapis
@@ -114,6 +126,7 @@ proxy:
           - google/rpc/
     - token: some_bitbucket_access_token
       user: some_username
+      url:   https://some.bitbucket.url/repo/is/accessible
       repo:
         owner: bufbuild
         name:  protovalidate
@@ -126,6 +139,7 @@ proxy:
           - proto/protovalidate/
     - token: some_bitbucket_access_token
       user: some_username
+      url:   https://some.bitbucket.url/repo/is/accessible
       repo:
         owner: grpc-ecosystem
         name:  grpc-gateway
