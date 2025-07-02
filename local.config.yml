@@ -1,6 +1,8 @@
 listen:  127.0.0.1:8080
 domain:  some-proper-url:8080
 #cache: ./.storage/.cache
+log:
+  level: "info" # # debug, info, warning(or warn), error
 tls:
   cert: cert.pem
   key:  key.pem

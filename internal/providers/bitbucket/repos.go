@@ -17,7 +17,6 @@ import (
 type (
 	User     string
 	Password string
-	Project  string
 )
 
 type Repo struct {
@@ -52,6 +51,14 @@ func (m multiRepo) find(owner, name string) (sourceRepo, bool) {
 	return sourceRepo{log: m.log, repo: m.repos[i]}, true
 }
 
+func (m multiRepo) Repositories() []source.Source {
+	repos := make([]source.Source, len(m.repos))
+	for i, r := range m.repos {
+		repos[i] = sourceRepo{log: m.log, repo: r}
+	}
+	return repos
+}
+
 func NewMultiRepo(log *slog.Logger, repos []Repo) multiRepo {
 	return multiRepo{
 		log:   log,
@@ -70,7 +77,10 @@ func (r sourceRepo) ConfigHash() string {
 	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo.Repo))))
 }
 
-func (r sourceRepo) Name() string { return "bitbucket proxy" }
+func (r sourceRepo) Name() string     { return "bitbucket proxy" }
+func (r sourceRepo) Owner() string    { return r.repo.Owner }
+func (r sourceRepo) RepoName() string { return r.repo.Name }
+func (r sourceRepo) Type() string     { return "bitbucket" }
 
 func (r sourceRepo) GetMeta(ctx context.Context, commit string) (content.Meta, error) {
 	return connect(r.log, r.repo.User, r.repo.Password, r.repo.URL.String()).

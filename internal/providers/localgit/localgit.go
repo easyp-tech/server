@@ -35,7 +35,6 @@ type store struct {
 	l       namedLocks
 }
 
-//nolint:ireturn
 func (s *store) Find(owner, repoName string) source.Source {
 	if s.rootDir == "" {
 		return nil
@@ -49,7 +48,6 @@ func (s *store) Find(owner, repoName string) source.Source {
 	}
 
 	repo := filter.FindRepo(owner, repoName, s.repos)
-
 	if repo.Owner != owner {
 		return nil
 	}
@@ -59,6 +57,21 @@ func (s *store) Find(owner, repoName string) source.Source {
 		repo:    repo,
 		l:       s.l,
 	}
+}
+
+func (s *store) Repositories() []source.Source {
+	repos := make([]source.Source, 0, len(s.repos))
+	for _, r := range s.repos {
+		dirName := path.Join(s.rootDir, r.Owner, r.Name)
+		if fileStat, err := os.Stat(dirName); err == nil && fileStat.IsDir() {
+			repos = append(repos, sourceRepo{
+				dirName: dirName,
+				repo:    r,
+				l:       s.l,
+			})
+		}
+	}
+	return repos
 }
 
 func (s *store) Check(owner, repoName string) bool {
@@ -99,7 +112,10 @@ func (r sourceRepo) ConfigHash() string {
 	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo))))
 }
 
-func (r sourceRepo) Name() string { return "local git" }
+func (r sourceRepo) Name() string     { return "local git" }
+func (r sourceRepo) Owner() string    { return r.repo.Owner }
+func (r sourceRepo) RepoName() string { return r.repo.Name }
+func (r sourceRepo) Type() string     { return "local" }
 
 func (r sourceRepo) GetMeta(_ context.Context, commit string) (content.Meta, error) {
 	l := r.l.Lock(r.dirName)
