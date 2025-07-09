@@ -11,4 +11,7 @@ type Source interface {
 	GetFiles(ctx context.Context, commit string) ([]content.File, error)
 	ConfigHash() string
 	Name() string
+	Owner() string
+	RepoName() string
+	Type() string
 }

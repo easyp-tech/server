@@ -121,3 +121,37 @@ func (c artifactory) Put(ctx context.Context, owner, repoName, commit, configHas
 
 	return nil
 }
+
+func (c artifactory) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		strings.TrimSuffix(c.baseURL, "/")+"/api/system/ping",
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("building ping request: %w", err)
+	}
+
+	req.SetBasicAuth(c.user, c.password)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ping request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected ping status: %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading ping response: %w", err)
+	}
+
+	if string(body) != "OK" {
+		return fmt.Errorf("unexpected ping response: %s", string(body))
+	}
+
+	return nil
+}

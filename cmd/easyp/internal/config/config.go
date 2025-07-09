@@ -13,6 +13,11 @@ type Config struct {
 	Cache  Cache          `json:"cache"`
 	Proxy  Proxy          `json:"proxy"`
 	Local  LocalGit       `json:"local"`
+	Log    LogConfig      `json:"log"`
+}
+
+type LogConfig struct {
+	Level string `json:"level"`
 }
 
 type TLSConfig struct {

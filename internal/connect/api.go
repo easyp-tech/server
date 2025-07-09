@@ -24,6 +24,11 @@ type api struct {
 	domain string
 }
 
+func rootHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Hello! This is Buf Proxy Service and this is its Health Check!"))
+}
+
 // New creates and returns gRPC server.
 func New(
 	log *slog.Logger,
@@ -37,9 +42,12 @@ func New(
 	}
 
 	mux := http.NewServeMux()
+
 	mux.Handle(connect.NewResolveServiceHandler(a))
 	mux.Handle(connect.NewRepositoryServiceHandler(a))
 	mux.Handle(connect.NewDownloadServiceHandler(a))
+
+	mux.HandleFunc("/", rootHandler)
 
 	return mux
 }

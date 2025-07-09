@@ -1,24 +1,51 @@
 package logger
 
 import (
+	"log/slog"
 	"os"
-
-	"golang.org/x/exp/slog"
+	"strings"
 )
 
-func New(debug bool) *slog.Logger {
-	level := slog.LevelInfo
-	if debug {
-		level = slog.LevelDebug
+var globalLogger *slog.Logger
+
+func Init(level string) {
+	var logLevel slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn", "warning":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
 	}
 
-	return slog.New(
-		slog.NewTextHandler(
-			os.Stdout,
-			&slog.HandlerOptions{ //nolint:exhaustruct
-				// AddSource: true,
-				Level: level,
-			},
-		),
-	)
+	opts := &slog.HandlerOptions{
+		Level:     logLevel,
+		AddSource: false,
+	}
+
+	globalLogger = slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	slog.SetDefault(globalLogger)
+}
+
+func Debug(msg string, args ...any) {
+	globalLogger.Debug(msg, args...)
+}
+
+func Info(msg string, args ...any) {
+	globalLogger.Info(msg, args...)
+}
+
+func Warn(msg string, args ...any) {
+	globalLogger.Warn(msg, args...)
+}
+
+func Error(msg string, args ...any) {
+	globalLogger.Error(msg, args...)
+}
+
+func Get() *slog.Logger {
+	return globalLogger
 }

@@ -78,3 +78,10 @@ func (c Local) Put(_ context.Context, owner, repoName, commit, configHash string
 
 	return nil
 }
+
+func (c Local) Ping(_ context.Context) error {
+	if _, err := os.Stat(c.Dir); err != nil {
+		return fmt.Errorf("local cache dir inaccessible: %w", err)
+	}
+	return nil
+}

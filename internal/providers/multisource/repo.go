@@ -11,30 +11,40 @@ import (
 	"github.com/easyp-tech/server/internal/providers/source"
 )
 
-type Source interface {
+type Provider interface {
 	Find(owner, repoName string) source.Source
+	Repositories() []source.Source
 }
 
 type Cache interface {
 	Get(ctx context.Context, owner, repoName, commit, configHash string) ([]content.File, error)
 	Put(ctx context.Context, owner, repoName, commit, configHash string, in []content.File) error
+	Ping(ctx context.Context) error // Новый метод
 }
 
 type Repo struct {
-	log     *slog.Logger
-	cache   Cache
-	sources []Source
+	log       *slog.Logger
+	cache     Cache
+	providers []Provider
 }
 
-func New(log *slog.Logger, cache Cache, sources ...Source) Repo {
+func New(log *slog.Logger, cache Cache, providers ...Provider) Repo {
 	return Repo{
-		log:     log,
-		cache:   cache,
-		sources: sources,
+		log:       log,
+		cache:     cache,
+		providers: providers,
 	}
 }
 
 var ErrNotFound = errors.New("not found")
+
+func (r Repo) Repositories() []source.Source {
+	var repos []source.Source
+	for _, p := range r.providers {
+		repos = append(repos, p.Repositories()...)
+	}
+	return repos
+}
 
 func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error) {
 	r.log.Debug("looking for meta", "owner", owner, "repo", repoName)
@@ -74,36 +84,44 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 func (r Repo) cacheGet(ctx context.Context, owner, repoName, commit, configHash string) []content.File {
 	files, err := r.cache.Get(ctx, owner, repoName, commit, configHash)
 	if err != nil {
-		r.log.Error("from cache", "owner", owner, "repo", repoName, "commit", commit, "error", err)
-
+		r.log.Error("cache get failed",
+			"owner", owner,
+			"repo", repoName,
+			"commit", commit,
+			"error", err)
 		return nil
 	}
 
-	r.log.Debug("from cache", "owner", owner, "repo", repoName, "commit", commit, "files", len(files))
-
+	if len(files) > 0 {
+		r.log.Debug("cache hit",
+			"owner", owner,
+			"repo", repoName,
+			"commit", commit,
+			"files", len(files))
+	}
 	return files
 }
 
 func (r Repo) cachePut(ctx context.Context, owner, repoName, commit, configHash string, files []content.File) {
 	if err := r.cache.Put(ctx, owner, repoName, commit, configHash, files); err != nil {
-		r.log.Error(
-			"to cache",
+		r.log.Error("cache put failed",
 			"owner", owner,
 			"repo", repoName,
 			"commit", commit,
 			"files", len(files),
-			"error", err,
-		)
-
-		return
+			"error", err)
+	} else {
+		r.log.Debug("cache updated",
+			"owner", owner,
+			"repo", repoName,
+			"commit", commit,
+			"files", len(files))
 	}
-
-	r.log.Debug("to cache", "owner", owner, "repo", repoName, "commit", commit, "files", len(files))
 }
 
 func (r Repo) findSource(owner, repoName string) source.Source { //nolint:ireturn
-	for _, s := range r.sources {
-		if repo := s.Find(owner, repoName); repo != nil {
+	for _, p := range r.providers {
+		if repo := p.Find(owner, repoName); repo != nil {
 			return repo
 		}
 	}

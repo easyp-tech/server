@@ -15,3 +15,7 @@ func (c Noop) Get(_ context.Context, _, _, _, _ string) ([]content.File, error) 
 func (c Noop) Put(_ context.Context, _, _, _, _ string, _ []content.File) error {
 	return nil
 }
+
+func (c Noop) Ping(_ context.Context) error {
+	return nil
+}
