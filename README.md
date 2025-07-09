@@ -28,10 +28,12 @@ A backward-compatible server for working with the CLI tool [buf](https://github.
 #### Repository Setup
 
 ```bash
-wget https://github.com/easyp-tech/server/blob/main/scripts/clone_repos.sh -O clone_repos.sh
-
+wget https://raw.githubusercontent.com/easyp-tech/server/refs/heads/main/scripts/clone_repos.sh -O clone_repos.sh
+```
+```bash
 chmod +x clone_repos.sh
-
+```
+```bash
 ./clone_repos.sh https://github.com/googleapis/googleapis.git https://github.com/bufbuild/protovalidate.git
 ```
 
