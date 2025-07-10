@@ -16,6 +16,6 @@ func (c Noop) Put(_ context.Context, _, _, _, _ string, _ []content.File) error 
 	return nil
 }
 
-func (c Noop) Ping(_ context.Context) error {
+func (c Noop) CheckWriteAccess(_ context.Context) error {
 	return nil
 }
