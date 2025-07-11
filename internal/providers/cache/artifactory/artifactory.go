@@ -10,12 +10,14 @@ import (
 	"net/http"
 	"strings"
 
-	"golang.org/x/exp/slog"
-
 	"github.com/easyp-tech/server/internal/providers/content"
+	"golang.org/x/exp/slog"
 )
 
-var ErrUnexpected = errors.New("unexpected")
+var (
+	ErrUnexpected = errors.New("unexpected")
+	testFilePath  = "buf-proxy-connection-test.json"
+)
 
 func New(
 	log *slog.Logger,
@@ -122,35 +124,56 @@ func (c artifactory) Put(ctx context.Context, owner, repoName, commit, configHas
 	return nil
 }
 
-func (c artifactory) Ping(ctx context.Context) error {
+func (c artifactory) CheckWriteAccess(ctx context.Context) error {
+	url := c.baseURL + testFilePath
+	testContent := []byte(`{"status": "test"}`)
+
 	req, err := http.NewRequestWithContext(
 		ctx,
-		http.MethodGet,
-		strings.TrimSuffix(c.baseURL, "/")+"/api/system/ping",
-		nil,
+		http.MethodPut,
+		url,
+		bytes.NewReader(testContent),
 	)
 	if err != nil {
-		return fmt.Errorf("building ping request: %w", err)
+		return fmt.Errorf("building test write request: %w", err)
 	}
 
 	req.SetBasicAuth(c.user, c.password)
+	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("ping request failed: %w", err)
+		return fmt.Errorf("test write request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected ping status: %d", resp.StatusCode)
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("test write failed: status %d, response: %q",
+			resp.StatusCode, string(body))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	req, err = http.NewRequestWithContext(
+		ctx,
+		http.MethodDelete,
+		url,
+		nil,
+	)
 	if err != nil {
-		return fmt.Errorf("reading ping response: %w", err)
+		return fmt.Errorf("building test delete request: %w", err)
 	}
 
-	if string(body) != "OK" {
-		return fmt.Errorf("unexpected ping response: %s", string(body))
+	req.SetBasicAuth(c.user, c.password)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("test delete request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("test delete failed: status %d, response: %q",
+			resp.StatusCode, string(body))
 	}
 
 	return nil

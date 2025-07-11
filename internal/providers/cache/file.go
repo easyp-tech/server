@@ -79,9 +79,19 @@ func (c Local) Put(_ context.Context, owner, repoName, commit, configHash string
 	return nil
 }
 
-func (c Local) Ping(_ context.Context) error {
-	if _, err := os.Stat(c.Dir); err != nil {
-		return fmt.Errorf("local cache dir inaccessible: %w", err)
+func (c Local) CheckWriteAccess(ctx context.Context) error {
+	if c.Dir == "" {
+		return nil
 	}
+
+	testPath := path.Join(c.Dir, "buf-proxy-access-test.tmp")
+	if err := os.WriteFile(testPath, []byte("test"), 0o600); err != nil {
+		return fmt.Errorf("test write failed: %w", err)
+	}
+
+	if err := os.Remove(testPath); err != nil {
+		return fmt.Errorf("test delete failed: %w", err)
+	}
+
 	return nil
 }

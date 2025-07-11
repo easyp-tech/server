@@ -19,7 +19,7 @@ type Provider interface {
 type Cache interface {
 	Get(ctx context.Context, owner, repoName, commit, configHash string) ([]content.File, error)
 	Put(ctx context.Context, owner, repoName, commit, configHash string, in []content.File) error
-	Ping(ctx context.Context) error // Новый метод
+	CheckWriteAccess(ctx context.Context) error
 }
 
 type Repo struct {

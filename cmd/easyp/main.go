@@ -32,6 +32,7 @@ var (
 const (
 	minNumberOfRepos  = 128
 	connectionTimeout = 5 * time.Second
+	accessCheckPeriod = 1 * time.Hour
 )
 
 func main() {
@@ -52,15 +53,9 @@ func main() {
 		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), loggingMiddleware(log, handler)) } //nolint:gosec
 	)
 
-	// log.Info("Service started successfully.")
-
-	// 1. Check repository connections
 	checkRepositoryConnections(log, storage)
-
-	// 2. Check cache connection if applicable
-	if cache != nil {
-		checkCacheConnection(log, cache)
-	}
+	checkCacheAccess(log, cache)
+	startPeriodicAccessChecks(log, cache)
 
 	if cfg.TLS.CertFile != "" {
 		serve = func() error {
@@ -75,18 +70,38 @@ func main() {
 }
 
 // Check cache connection (Artifactory or Local)
-func checkCacheConnection(log *slog.Logger, cache multisource.Cache) {
+func checkCacheAccess(log *slog.Logger, cache multisource.Cache) {
 	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
 	defer cancel()
 
-	if err := cache.Ping(ctx); err != nil {
-		log.Error("cache connection failed",
+	if err := cache.CheckWriteAccess(ctx); err != nil {
+		log.Error("cache access check failed",
 			slog.String("type", fmt.Sprintf("%T", cache)),
 			slog.String("error", err.Error()))
 	} else {
-		log.Info("cache connected",
+		log.Info("cache access check successful",
 			slog.String("type", fmt.Sprintf("%T", cache)))
 	}
+}
+
+// Check cache periodic access check (Artifactory or Local)
+func startPeriodicAccessChecks(log *slog.Logger, cache multisource.Cache) {
+	ticker := time.NewTicker(accessCheckPeriod)
+
+	go func() {
+		for range ticker.C {
+			ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
+			if err := cache.CheckWriteAccess(ctx); err != nil {
+				log.Error("periodic cache access check failed",
+					slog.String("type", fmt.Sprintf("%T", cache)),
+					slog.String("error", err.Error()))
+			} else {
+				log.Debug("periodic cache access check successful",
+					slog.String("type", fmt.Sprintf("%T", cache)))
+			}
+			cancel()
+		}
+	}()
 }
 
 // Check connections to all repositories
@@ -325,17 +340,6 @@ func buildCache(log *slog.Logger, cfg config.Cache) multisource.Cache { //nolint
 			cfg.Artifactory.AccessToken,
 		)
 
-		// Check Artifactory connection
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := c.Ping(ctx); err != nil {
-			log.Error("Artifactory connection failed",
-				slog.String("url", cfg.Artifactory.BaseURL.String()),
-				slog.String("error", err.Error()))
-		} else {
-			log.Info("Artifactory connected",
-				slog.String("url", cfg.Artifactory.BaseURL.String()))
-		}
 		return c
 
 	default:
