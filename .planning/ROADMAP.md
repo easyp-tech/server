@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `go.mod` lists `connectrpc.com/connect` v1.18.1 and `go mod tidy` shows no version conflicts
   3. `go build ./...` succeeds with newly generated proto code replacing the old generated code
   4. `buf.gen.yaml` no longer includes the go-grpc plugin in the codegen pipeline
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 01-01: Switch proto source and upgrade dependencies
@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Code Generation | 0/2 | Not started | - |
+| 1. Code Generation | 0/2 | Planning complete | - |
 | 2. Handler Adaptation | 0/2 | Not started | - |
 | 3. Test Infrastructure | 0/3 | Not started | - |
 | 4. Old Protocol Validation | 0/1 | Not started | - |
