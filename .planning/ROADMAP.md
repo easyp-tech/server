@@ -13,7 +13,7 @@ Modernize the Buf registry proxy to serve both old (v1.30.1) and modern (v1.69.0
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Code Generation** - Switch proto source to v1.69.0, upgrade connect-go, regenerate code, verify build *(completed 2026-05-07)*
-- [ ] **Phase 2: Handler Adaptation** - Update handler structs to embed new Unimplemented types, verify all RPCs compile and serve
+- [x] **Phase 2: Handler Adaptation** - Update handler structs to embed new Unimplemented types, verify all RPCs compile and serve *(completed 2026-05-07)*
 - [ ] **Phase 3: Test Infrastructure** - Build reusable test helpers for TLS server, buf binary management, and GitHub API integration
 - [ ] **Phase 4: Old Protocol Validation** - Confirm buf v1.30.1 still works against the updated proxy using real binaries and real GitHub API
 - [ ] **Phase 5: New Protocol Validation** - Confirm buf v1.69.0+ works against the proxy, discover any required new RPC implementations
@@ -47,7 +47,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 02-01-PLAN.md — Verify handler adaptation baseline and run E2E smoke tests for both buf CLI versions
+- [x] 02-01-PLAN.md — Verify handler adaptation baseline and run E2E smoke tests for both buf CLI versions
 
 ### Phase 3: Test Infrastructure
 **Goal**: Reusable test helpers exist for starting a TLS proxy server, managing pinned buf binaries, and making authenticated GitHub API calls
@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Code Generation | 2/2 | Complete | 2026-05-07 |
-| 2. Handler Adaptation | 0/1 | Planned | - |
+| 2. Handler Adaptation | 1/1 | Complete | 2026-05-07 |
 | 3. Test Infrastructure | 0/3 | Not started | - |
 | 4. Old Protocol Validation | 0/1 | Not started | - |
 | 5. New Protocol Validation | 0/2 | Not started | - |

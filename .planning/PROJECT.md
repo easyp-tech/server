@@ -59,6 +59,7 @@ The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI 
 | GitHub-only provider testing | GitHub is the primary provider; testing one real provider is sufficient for protocol validation | — Pending |
 | Real buf binary + real server + TLS for tests | Tests must prove the actual buf CLI can communicate with the proxy — anything less wouldn't catch protocol issues | — Pending |
 | Proto diff as part of work | We don't know exact differences between old and new protocol — will analyze during research/planning | — Pending |
+| buf v1.69.0 content-type mismatch | Modern buf expects `application/proto` but proxy returns `text/plain; charset=utf-8` — Connect RPC protocol version difference | Escalated to Phase 5 |
 
 ## Evolution
 
@@ -78,4 +79,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-07 after initialization*
+*Last updated: 2026-05-07 after Phase 2 completion*
