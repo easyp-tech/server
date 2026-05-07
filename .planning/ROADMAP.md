@@ -12,7 +12,7 @@ Modernize the Buf registry proxy to serve both old (v1.30.1) and modern (v1.69.0
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Code Generation** - Switch proto source to v1.69.0, upgrade connect-go, regenerate code, verify build
+- [x] **Phase 1: Code Generation** - Switch proto source to v1.69.0, upgrade connect-go, regenerate code, verify build *(completed 2026-05-07)*
 - [ ] **Phase 2: Handler Adaptation** - Update handler structs to embed new Unimplemented types, verify all RPCs compile and serve
 - [ ] **Phase 3: Test Infrastructure** - Build reusable test helpers for TLS server, buf binary management, and GitHub API integration
 - [ ] **Phase 4: Old Protocol Validation** - Confirm buf v1.30.1 still works against the updated proxy using real binaries and real GitHub API
@@ -32,8 +32,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: Switch proto source and upgrade dependencies
-- [ ] 01-02: Regenerate proto code and verify build
+- [x] 01-01: Switch proto source and upgrade dependencies
+- [x] 01-02: Regenerate proto code and verify build
 
 ### Phase 2: Handler Adaptation
 **Goal**: Server binary compiles, starts, and serves RPCs using new generated types with all new RPCs returning Unimplemented
@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Code Generation | 0/2 | Planning complete | - |
+| 1. Code Generation | 2/2 | Complete | 2026-05-07 |
 | 2. Handler Adaptation | 0/2 | Not started | - |
 | 3. Test Infrastructure | 0/3 | Not started | - |
 | 4. Old Protocol Validation | 0/1 | Not started | - |

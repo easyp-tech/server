@@ -67,10 +67,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BCG-01 | Phase 1 | Pending |
-| BCG-02 | Phase 1 | Pending |
-| BCG-03 | Phase 1 | Pending |
-| BCG-04 | Phase 1 | Pending |
+| BCG-01 | Phase 1 | Done |
+| BCG-02 | Phase 1 | Done |
+| BCG-03 | Phase 1 | Done |
+| BCG-04 | Phase 1 | Done |
 | HAND-01 | Phase 2 | Pending |
 | HAND-02 | Phase 2 | Pending |
 | HAND-03 | Phase 2 | Pending |
