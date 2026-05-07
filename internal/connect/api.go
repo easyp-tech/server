@@ -47,6 +47,10 @@ func New(
 	mux.Handle(connect.NewRepositoryServiceHandler(a))
 	mux.Handle(connect.NewDownloadServiceHandler(a))
 
+	// v1beta1 CommitService handler for modern buf CLI (v1.69.0+).
+	commitHandler := &commitServiceHandler{api: a}
+	mux.HandleFunc("/buf.registry.module.v1beta1.CommitService/", commitHandler.ServeHTTP)
+
 	mux.HandleFunc("/", rootHandler)
 
 	return mux
