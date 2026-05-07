@@ -48,8 +48,16 @@ func New(
 	mux.Handle(connect.NewDownloadServiceHandler(a))
 
 	// v1beta1 CommitService handler for modern buf CLI (v1.69.0+).
-	commitHandler := &commitServiceHandler{api: a}
+	commitHandler := &commitServiceHandler{
+		api: a, commitMap: make(map[string]moduleRef),
+		infoCache: make(map[string]commitInfoCache),
+		filesMap: make(map[string][]content.File),
+	}
 	mux.HandleFunc("/buf.registry.module.v1beta1.CommitService/", commitHandler.ServeHTTP)
+	mux.HandleFunc("/buf.registry.module.v1beta1.GraphService/", commitHandler.ServeGraph)
+	mux.HandleFunc("/buf.registry.module.v1beta1.DownloadService/", commitHandler.ServeDownload)
+	mux.HandleFunc("/buf.registry.module.v1.ModuleService/", commitHandler.ServeGetModules)
+	mux.HandleFunc("/buf.registry.module.v1beta1.ModuleService/", commitHandler.ServeGetModules)
 
 	mux.HandleFunc("/", rootHandler)
 

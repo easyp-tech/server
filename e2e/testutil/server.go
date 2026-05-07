@@ -100,6 +100,9 @@ deps:
 `, port)
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600), "writing buf.yaml")
 
+	// Write a dummy proto file so modern buf CLI versions don't complain about empty workspace.
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0600), "writing dummy.proto")
+
 	// Run buf mod update.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -143,6 +146,8 @@ deps:
   - 127.0.0.1:%d/googleapis/googleapis
 `, port)
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600), "writing buf.yaml")
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0600), "writing dummy.proto")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

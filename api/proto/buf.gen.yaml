@@ -48,6 +48,10 @@ plugins:
       - Mbuf/alpha/registry/v1alpha1/image.proto=github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1
       - Mbuf/alpha/registry/v1alpha1/admin.proto=github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1
       - Mbuf/alpha/registry/v1alpha1/user.proto=github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1
+      - Mbuf/registry/module/v1beta1/digest.proto=github.com/easyp-tech/server/gen/proto/buf/registry/module/v1beta1
+      - Mbuf/registry/module/v1beta1/commit.proto=github.com/easyp-tech/server/gen/proto/buf/registry/module/v1beta1
+      - Mbuf/registry/module/v1beta1/digest.proto=github.com/easyp-tech/server/gen/proto/buf/registry/module/v1beta1
+      - Mbuf/registry/module/v1beta1/commit.proto=github.com/easyp-tech/server/gen/proto/buf/registry/module/v1beta1
   - name: connect-go
     out: ../../gen/proto
     opt:
@@ -95,3 +99,5 @@ plugins:
       - Mbuf/alpha/registry/v1alpha1/image.proto=github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1
       - Mbuf/alpha/registry/v1alpha1/admin.proto=github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1
       - Mbuf/alpha/registry/v1alpha1/user.proto=github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1
+      - Mbuf/registry/module/v1beta1/digest.proto=github.com/easyp-tech/server/gen/proto/buf/registry/module/v1beta1
+      - Mbuf/registry/module/v1beta1/commit.proto=github.com/easyp-tech/server/gen/proto/buf/registry/module/v1beta1
