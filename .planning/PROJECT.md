@@ -1,5 +1,17 @@
 # EasyP Buf Proxy — Protocol Modernization
 
+## Current Milestone: v1.2 Dependency Modernization
+
+**Goal:** Upgrade Go to 1.26 and update all dependencies to latest compatible versions
+
+**Target features:**
+
+- Upgrade Go from 1.22 to 1.26
+- Update connect-go to v1.19.x (requires Go 1.24+)
+- Update all other dependencies to latest
+- Verify build and tests pass after upgrades
+- Update buf proto submodule to latest version
+
 ## What This Is
 
 A Go-based proxy server that translates Buf CLI registry requests into VCS API calls (GitHub, BitBucket, local git). The server currently implements the deprecated Buf `registry.v1alpha1` protocol (last compatible version: buf v1.30.1) via Connect RPC. We are adding support for the modern Buf protocol (v1.69.0+) while keeping the old protocol active for backward compatibility.

@@ -1,104 +1,66 @@
-# Roadmap: EasyP Buf Proxy — Protocol Modernization
+# Roadmap: EasyP Buf Proxy — Dependency Modernization
 
 ## Overview
 
-Modernize the Buf registry proxy to serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients. The journey starts with mechanical code generation from updated proto definitions, then adapts handlers to the new generated types, builds test infrastructure for integration testing with real buf binaries, and validates backward compatibility with the old protocol before confirming support for the new one.
+Upgrade Go from 1.22 to 1.26, update all dependencies to their latest compatible versions, regenerate proto code with the new connect-go, and verify that all build and E2E tests pass.
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 
-Decimal phases appear between their surrounding integers in numeric order.
+- [ ] **Phase 6: Dependency Upgrades** — Update Go to 1.26, connect-go to v1.19.x, and all other dependencies to latest; verify `go build ./...` passes
 
-- [x] **Phase 1: Code Generation** - Switch proto source to v1.69.0, upgrade connect-go, regenerate code, verify build *(completed 2026-05-07)*
-- [x] **Phase 2: Handler Adaptation** - Update handler structs to embed new Unimplemented types, verify all RPCs compile and serve *(completed 2026-05-07)*
-- [x] **Phase 3: Test Infrastructure** - Build reusable test helpers for TLS server, buf binary management, and GitHub API integration *(completed 2026-05-07)*
-- [x] **Phase 4: Old Protocol Validation** - Confirm buf v1.30.1 still works against the updated proxy using real binaries and real GitHub API *(completed 2026-05-07)*
-- [x] **Phase 5: New Protocol Validation** - Confirm buf v1.69.0+ works against the proxy, discover any required new RPC implementations *(completed 2026-05-07)*
+- [ ] **Phase 7: Proto Regeneration & Verification** — Regenerate proto code with new connect-go, update handler structs for new Unimplemented* types, verify E2E tests pass with both buf versions
 
 ## Phase Details
 
-### Phase 1: Code Generation
-**Goal**: Project compiles against v1.69.0 proto definitions with updated dependencies
-**Depends on**: Nothing (first phase)
-**Requirements**: BCG-01, BCG-02, BCG-03, BCG-04
-**Success Criteria** (what must be TRUE):
-  1. `generate.go` points at the `buf-v1.69.0` submodule and `go generate ./api/proto/...` completes without errors
-  2. `go.mod` lists `connectrpc.com/connect` v1.18.1 and `go mod tidy` shows no version conflicts
-  3. `go build ./...` succeeds with newly generated proto code replacing the old generated code
-  4. `buf.gen.yaml` no longer includes the go-grpc plugin in the codegen pipeline
+### Phase 6: Dependency Upgrades
+
+**Goal**: Go 1.26, connect-go v1.19.x, and all dependencies updated to latest compatible versions with a clean `go mod tidy`
+
+**Depends on**: Nothing (first phase of v1.2)
+
+**Requirements**: DEPS-01, DEPS-02, DEPS-03, DEPS-04
+
+**Success Criteria** (observable outcomes):
+
+1. `go.mod` declares `go 1.26` and `go build ./...` completes without errors
+2. `connectrpc.com/connect` is upgraded to v1.19.x and `go mod tidy` produces no conflicts
+3. All other dependencies (go-git, go-github, yaml, crypto, exp/slog, protobuf) are updated to their latest compatible versions
+4. `go mod tidy` run completes cleanly with no unused or missing dependencies
+
 **Plans**: 2 plans
 
-Plans:
-- [x] 01-01: Switch proto source and upgrade dependencies
-- [x] 01-02: Regenerate proto code and verify build
+- [ ] 06-01: Update go.mod to Go 1.26 and upgrade all dependencies to latest
+- [ ] 06-02: Run `go mod tidy` and verify `go build ./...` passes
 
-### Phase 2: Handler Adaptation
-**Goal**: Server binary compiles, starts, and serves RPCs using new generated types with all new RPCs returning Unimplemented
-**Depends on**: Phase 1
-**Requirements**: HAND-01, HAND-02, HAND-03, HAND-04
-**Success Criteria** (what must be TRUE):
-  1. Handler structs in `internal/connect/` embed the new `Unimplemented*Handler` types from regenerated code and the server starts without panics
-  2. Existing RPCs (`GetModulePins`, `DownloadManifestAndBlobs`, `GetRepositoryByFullName`, `GetRepositoriesByFullName`) compile and return correct response types for known request patterns
-  3. `GetSDKInfo` returns a gRPC `CodeUnimplemented` error (per D-01)
-  4. `ModulePin` responses include `manifest_digest` field present but empty (per D-02)
-**Plans**: 1 plan
+### Phase 7: Proto Regeneration & Verification
 
-Plans:
-- [x] 02-01-PLAN.md — Verify handler adaptation baseline and run E2E smoke tests for both buf CLI versions
+**Goal**: Proto code regenerated with new connect-go; handlers compile and E2E tests pass
 
-### Phase 3: Test Infrastructure
-**Goal**: Reusable test helpers exist for starting a TLS proxy server, managing pinned buf binaries, and making authenticated GitHub API calls
-**Depends on**: Phase 2
-**Requirements**: TINF-01, TINF-02, TINF-03, TINF-04, TINF-05, TINF-06
-**Success Criteria** (what must be TRUE):
-  1. A test helper can programmatically start the proxy server with TLS using `~/local-tls/server/` certs and stop it cleanly after the test
-  2. Both buf v1.30.1 and v1.69.0+ binaries are downloaded (or path-configured) and their versions are asserted before test execution
-  3. Tests read GitHub API token and target repository from environment variables and fail fast with a clear message if not configured
-  4. Multiple tests can run in parallel without port conflicts or shared state interference
-  5. Test configuration supports CI execution via environment variables with no hardcoded paths or secrets
+**Depends on**: Phase 6
+
+**Requirements**: DEPS-05, DEPS-06, DEPS-07
+
+**Success Criteria** (observable outcomes):
+
+1. `go generate` produces new proto code from existing buf submodule that compiles against connect-go v1.19.x
+2. Handler structs in `internal/connect/` embed the new `Unimplemented*Handler` types and compile without errors
+3. E2E tests pass with both buf v1.30.1 and v1.69.0+ after the dependency and code generation updates
+
 **Plans**: 2 plans
 
-Plans:
-- [x] 03-01-PLAN.md — Create testutil package with config generation, server lifecycle, and buf binary management
-- [x] 03-02-PLAN.md — Refactor smoke test to use testutil and create internal validation tests
-
-### Phase 4: Old Protocol Validation
-**Goal**: Backward compatibility confirmed — buf v1.30.1 commands work against the updated proxy
-**Depends on**: Phase 3
-**Requirements**: OLD-01, OLD-02
-**Success Criteria** (what must be TRUE):
-  1. `buf mod update` succeeds against the proxy using buf v1.30.1 binary with a real GitHub provider and produces a valid `buf.lock` file
-  2. `buf dep update` (reinterpreted as two-step `buf mod update`) succeeds against the proxy using buf v1.30.1 binary with a real GitHub provider
-**Plans**: 1 plan
-
-Plans:
-- [x] 04-01-PLAN.md — Expose server output from StartServer and create two-step buf mod update test for OLD-02
-
-### Phase 5: New Protocol Validation
-**Goal**: Modern buf CLI support confirmed — buf v1.69.0+ commands work against the proxy, and any required new RPC implementations are identified
-**Depends on**: Phase 4
-**Requirements**: NEW-01, NEW-02
-**Success Criteria** (what must be TRUE):
-  1. `buf mod update` succeeds against the proxy using buf v1.69.0+ binary with a real GitHub provider and produces a valid `buf.lock` file
-  2. `buf dep update` succeeds against the proxy using buf v1.69.0+ binary with a real GitHub provider
-**Plans**: 2 plans
-
-Plans:
-- [x] 05-01-PLAN.md — Add RunBufDepUpdate helper and write new protocol tests with debug logging for v1.69.0
-- [x] 05-02-PLAN.md — Fix any RPC implementation blockers discovered by Plan 05-01 testing
+- [ ] 07-01: Regenerate proto code and verify compilation with updated connect-go
+- [ ] 07-02: Run full E2E test suite with both buf v1.30.1 and v1.69.0+ to confirm everything works
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
+
+Phases execute in numeric order: 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Code Generation | 2/2 | Complete | 2026-05-07 |
-| 2. Handler Adaptation | 1/1 | Complete | 2026-05-07 |
-| 3. Test Infrastructure | 2/2 | Complete | 2026-05-07 |
-| 4. Old Protocol Validation | 1/1 | Complete | 2026-05-07 |
-| 5. New Protocol Validation | 2/2 | Complete | 2026-05-07 |
+| 6. Dependency Upgrades | 0/2 | In Progress | — |
+| 7. Proto Regeneration & Verification | 0/2 | Pending | — |
