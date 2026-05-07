@@ -99,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Code Generation | 2/2 | Complete | 2026-05-07 |
-| 2. Handler Adaptation | 0/1 | Not started | - |
+| 2. Handler Adaptation | 0/1 | Planned | - |
 | 3. Test Infrastructure | 0/3 | Not started | - |
 | 4. Old Protocol Validation | 0/1 | Not started | - |
 | 5. New Protocol Validation | 0/2 | Not started | - |
