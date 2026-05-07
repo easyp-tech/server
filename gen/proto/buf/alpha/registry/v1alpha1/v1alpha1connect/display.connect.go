@@ -1,4 +1,4 @@
-// Copyright 2020-2023 Buf Technologies, Inc.
+// Copyright 2020-2026 Buf Technologies, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -53,6 +53,9 @@ const (
 	// DisplayServiceDisplayRepositoryElementsProcedure is the fully-qualified name of the
 	// DisplayService's DisplayRepositoryElements RPC.
 	DisplayServiceDisplayRepositoryElementsProcedure = "/buf.alpha.registry.v1alpha1.DisplayService/DisplayRepositoryElements"
+	// DisplayServiceDisplayPluginElementsProcedure is the fully-qualified name of the DisplayService's
+	// DisplayPluginElements RPC.
+	DisplayServiceDisplayPluginElementsProcedure = "/buf.alpha.registry.v1alpha1.DisplayService/DisplayPluginElements"
 	// DisplayServiceDisplayUserElementsProcedure is the fully-qualified name of the DisplayService's
 	// DisplayUserElements RPC.
 	DisplayServiceDisplayUserElementsProcedure = "/buf.alpha.registry.v1alpha1.DisplayService/DisplayUserElements"
@@ -79,6 +82,8 @@ type DisplayServiceClient interface {
 	DisplayOrganizationElements(context.Context, *connect.Request[v1alpha1.DisplayOrganizationElementsRequest]) (*connect.Response[v1alpha1.DisplayOrganizationElementsResponse], error)
 	// DisplayRepositoryElements returns which repository elements should be displayed to the user.
 	DisplayRepositoryElements(context.Context, *connect.Request[v1alpha1.DisplayRepositoryElementsRequest]) (*connect.Response[v1alpha1.DisplayRepositoryElementsResponse], error)
+	// DisplayPluginElements returns which plugin elements should be displayed to the user.
+	DisplayPluginElements(context.Context, *connect.Request[v1alpha1.DisplayPluginElementsRequest]) (*connect.Response[v1alpha1.DisplayPluginElementsResponse], error)
 	// DisplayUserElements returns which user elements should be displayed to the user.
 	DisplayUserElements(context.Context, *connect.Request[v1alpha1.DisplayUserElementsRequest]) (*connect.Response[v1alpha1.DisplayUserElementsResponse], error)
 	// DisplayServerElements returns which server elements should be displayed to the user.
@@ -114,6 +119,12 @@ func NewDisplayServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 		displayRepositoryElements: connect.NewClient[v1alpha1.DisplayRepositoryElementsRequest, v1alpha1.DisplayRepositoryElementsResponse](
 			httpClient,
 			baseURL+DisplayServiceDisplayRepositoryElementsProcedure,
+			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+			connect.WithClientOptions(opts...),
+		),
+		displayPluginElements: connect.NewClient[v1alpha1.DisplayPluginElementsRequest, v1alpha1.DisplayPluginElementsResponse](
+			httpClient,
+			baseURL+DisplayServiceDisplayPluginElementsProcedure,
 			connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 			connect.WithClientOptions(opts...),
 		),
@@ -160,6 +171,7 @@ func NewDisplayServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 type displayServiceClient struct {
 	displayOrganizationElements       *connect.Client[v1alpha1.DisplayOrganizationElementsRequest, v1alpha1.DisplayOrganizationElementsResponse]
 	displayRepositoryElements         *connect.Client[v1alpha1.DisplayRepositoryElementsRequest, v1alpha1.DisplayRepositoryElementsResponse]
+	displayPluginElements             *connect.Client[v1alpha1.DisplayPluginElementsRequest, v1alpha1.DisplayPluginElementsResponse]
 	displayUserElements               *connect.Client[v1alpha1.DisplayUserElementsRequest, v1alpha1.DisplayUserElementsResponse]
 	displayServerElements             *connect.Client[v1alpha1.DisplayServerElementsRequest, v1alpha1.DisplayServerElementsResponse]
 	displayOwnerEntitledElements      *connect.Client[v1alpha1.DisplayOwnerEntitledElementsRequest, v1alpha1.DisplayOwnerEntitledElementsResponse]
@@ -178,6 +190,11 @@ func (c *displayServiceClient) DisplayOrganizationElements(ctx context.Context, 
 // buf.alpha.registry.v1alpha1.DisplayService.DisplayRepositoryElements.
 func (c *displayServiceClient) DisplayRepositoryElements(ctx context.Context, req *connect.Request[v1alpha1.DisplayRepositoryElementsRequest]) (*connect.Response[v1alpha1.DisplayRepositoryElementsResponse], error) {
 	return c.displayRepositoryElements.CallUnary(ctx, req)
+}
+
+// DisplayPluginElements calls buf.alpha.registry.v1alpha1.DisplayService.DisplayPluginElements.
+func (c *displayServiceClient) DisplayPluginElements(ctx context.Context, req *connect.Request[v1alpha1.DisplayPluginElementsRequest]) (*connect.Response[v1alpha1.DisplayPluginElementsResponse], error) {
+	return c.displayPluginElements.CallUnary(ctx, req)
 }
 
 // DisplayUserElements calls buf.alpha.registry.v1alpha1.DisplayService.DisplayUserElements.
@@ -221,6 +238,8 @@ type DisplayServiceHandler interface {
 	DisplayOrganizationElements(context.Context, *connect.Request[v1alpha1.DisplayOrganizationElementsRequest]) (*connect.Response[v1alpha1.DisplayOrganizationElementsResponse], error)
 	// DisplayRepositoryElements returns which repository elements should be displayed to the user.
 	DisplayRepositoryElements(context.Context, *connect.Request[v1alpha1.DisplayRepositoryElementsRequest]) (*connect.Response[v1alpha1.DisplayRepositoryElementsResponse], error)
+	// DisplayPluginElements returns which plugin elements should be displayed to the user.
+	DisplayPluginElements(context.Context, *connect.Request[v1alpha1.DisplayPluginElementsRequest]) (*connect.Response[v1alpha1.DisplayPluginElementsResponse], error)
 	// DisplayUserElements returns which user elements should be displayed to the user.
 	DisplayUserElements(context.Context, *connect.Request[v1alpha1.DisplayUserElementsRequest]) (*connect.Response[v1alpha1.DisplayUserElementsResponse], error)
 	// DisplayServerElements returns which server elements should be displayed to the user.
@@ -252,6 +271,12 @@ func NewDisplayServiceHandler(svc DisplayServiceHandler, opts ...connect.Handler
 	displayServiceDisplayRepositoryElementsHandler := connect.NewUnaryHandler(
 		DisplayServiceDisplayRepositoryElementsProcedure,
 		svc.DisplayRepositoryElements,
+		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
+		connect.WithHandlerOptions(opts...),
+	)
+	displayServiceDisplayPluginElementsHandler := connect.NewUnaryHandler(
+		DisplayServiceDisplayPluginElementsProcedure,
+		svc.DisplayPluginElements,
 		connect.WithIdempotency(connect.IdempotencyNoSideEffects),
 		connect.WithHandlerOptions(opts...),
 	)
@@ -297,6 +322,8 @@ func NewDisplayServiceHandler(svc DisplayServiceHandler, opts ...connect.Handler
 			displayServiceDisplayOrganizationElementsHandler.ServeHTTP(w, r)
 		case DisplayServiceDisplayRepositoryElementsProcedure:
 			displayServiceDisplayRepositoryElementsHandler.ServeHTTP(w, r)
+		case DisplayServiceDisplayPluginElementsProcedure:
+			displayServiceDisplayPluginElementsHandler.ServeHTTP(w, r)
 		case DisplayServiceDisplayUserElementsProcedure:
 			displayServiceDisplayUserElementsHandler.ServeHTTP(w, r)
 		case DisplayServiceDisplayServerElementsProcedure:
@@ -324,6 +351,10 @@ func (UnimplementedDisplayServiceHandler) DisplayOrganizationElements(context.Co
 
 func (UnimplementedDisplayServiceHandler) DisplayRepositoryElements(context.Context, *connect.Request[v1alpha1.DisplayRepositoryElementsRequest]) (*connect.Response[v1alpha1.DisplayRepositoryElementsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("buf.alpha.registry.v1alpha1.DisplayService.DisplayRepositoryElements is not implemented"))
+}
+
+func (UnimplementedDisplayServiceHandler) DisplayPluginElements(context.Context, *connect.Request[v1alpha1.DisplayPluginElementsRequest]) (*connect.Response[v1alpha1.DisplayPluginElementsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("buf.alpha.registry.v1alpha1.DisplayService.DisplayPluginElements is not implemented"))
 }
 
 func (UnimplementedDisplayServiceHandler) DisplayUserElements(context.Context, *connect.Request[v1alpha1.DisplayUserElementsRequest]) (*connect.Response[v1alpha1.DisplayUserElementsResponse], error) {
