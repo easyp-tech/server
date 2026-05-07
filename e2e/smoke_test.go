@@ -82,6 +82,8 @@ func startServer(t *testing.T, projectRoot, token, home string) (int, func()) {
 domain: "127.0.0.1:%d"
 log:
   level: "info"
+cache:
+  type: "none"
 tls:
   cert: %s
   key:  %s
