@@ -3,14 +3,14 @@ module github.com/easyp-tech/server
 go 1.22
 
 require (
-	connectrpc.com/connect v1.11.1
+	connectrpc.com/connect v1.18.1
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-git/go-git/v5 v5.9.0
 	github.com/google/go-github/v59 v59.0.0
 	golang.org/x/crypto v0.23.0
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	google.golang.org/grpc v1.59.0
-	google.golang.org/protobuf v1.34.1
+	google.golang.org/protobuf v1.34.2
 )
 
 require (
