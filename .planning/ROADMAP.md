@@ -59,12 +59,11 @@ Plans:
   3. Tests read GitHub API token and target repository from environment variables and fail fast with a clear message if not configured
   4. Multiple tests can run in parallel without port conflicts or shared state interference
   5. Test configuration supports CI execution via environment variables with no hardcoded paths or secrets
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: Build TLS server test helper with port allocation
-- [ ] 03-02: Build buf binary management and GitHub test configuration helpers
-- [ ] 03-03: Integration test skeleton with parallel execution support
+- [ ] 03-01-PLAN.md — Create testutil package with config generation, server lifecycle, and buf binary management
+- [ ] 03-02-PLAN.md — Refactor smoke test to use testutil and create internal validation tests
 
 ### Phase 4: Old Protocol Validation
 **Goal**: Backward compatibility confirmed — buf v1.30.1 commands work against the updated proxy
@@ -100,6 +99,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Code Generation | 2/2 | Complete | 2026-05-07 |
 | 2. Handler Adaptation | 1/1 | Complete | 2026-05-07 |
-| 3. Test Infrastructure | 0/3 | Not started | - |
+| 3. Test Infrastructure | 0/2 | Not started | - |
 | 4. Old Protocol Validation | 0/1 | Not started | - |
 | 5. New Protocol Validation | 0/2 | Not started | - |
