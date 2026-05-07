@@ -34,11 +34,12 @@ func TestSmokeBufModUpdate(t *testing.T) {
 			t.Parallel()
 
 			bufPath := testutil.GetBuf(t, tc.version)
-			port := testutil.StartServer(t, cfg)
+			srv := testutil.StartServer(t, cfg)
 
-			exitCode, stderr := testutil.RunBufModUpdate(t, bufPath, port)
+			exitCode, stderr := testutil.RunBufModUpdate(t, bufPath, srv.Port)
 			if exitCode != 0 {
-				t.Fatalf("buf mod update failed (exit %d): %s", exitCode, stderr)
+				t.Fatalf("buf mod update failed (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
+					exitCode, srv.Output.String(), stderr)
 			}
 		})
 	}

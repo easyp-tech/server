@@ -14,15 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ServerResult holds the result of starting a test proxy server.
+type ServerResult struct {
+	// Port is the allocated TCP port number the server is listening on.
+	Port int
+	// Output contains the combined stdout/stderr output from the server subprocess.
+	// Use this in test failure messages for diagnostics.
+	Output *bytes.Buffer
+}
+
 // StartServer starts the TLS proxy as a subprocess, waits for it to accept
-// TCP connections, and registers cleanup via t.Cleanup. Returns the allocated
-// port number.
+// TCP connections, and registers cleanup via t.Cleanup. Returns a ServerResult
+// with the allocated port and a buffer capturing server output.
 //
 // The server is started via "go run ./cmd/easyp -cfg <path>" with a config
 // generated from cfg. The subprocess runs in the project root directory.
 // Tests that call StartServer should first call RequireEnvToken to ensure
 // the GitHub token is available.
-func StartServer(t *testing.T, cfg TestConfig) int {
+func StartServer(t *testing.T, cfg TestConfig) ServerResult {
 	t.Helper()
 
 	// Allocate a free TCP port.
@@ -67,13 +76,13 @@ func StartServer(t *testing.T, cfg TestConfig) int {
 		conn, dialErr := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if dialErr == nil {
 			conn.Close()
-			return port
+			return ServerResult{Port: port, Output: &serverOutput}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
 	t.Fatalf("server did not become ready on port %d within 30s. Output:\n%s", port, serverOutput.String())
-	return port
+	return ServerResult{}
 }
 
 // RunBufModUpdate creates a minimal buf module in a temp directory and runs
