@@ -84,11 +84,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. `buf mod update` succeeds against the proxy using buf v1.69.0+ binary with a real GitHub provider and produces a valid `buf.lock` file
   2. `buf dep update` succeeds against the proxy using buf v1.69.0+ binary with a real GitHub provider
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 05-01: Write and run new protocol integration tests
-- [ ] 05-02: Address any newly discovered required RPC implementations
+- [ ] 05-01-PLAN.md — Add RunBufDepUpdate helper and write new protocol tests with debug logging for v1.69.0
+- [ ] 05-02-PLAN.md — Fix any RPC implementation blockers discovered by Plan 05-01 testing
 
 ## Progress
 
