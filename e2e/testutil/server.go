@@ -129,3 +129,45 @@ deps:
 
 	return exitCode, stderr.String()
 }
+
+// RunBufDepUpdate creates a minimal buf module in a temp directory and runs
+// "buf dep update" against the proxy at the given port. Returns the exit code
+// and stderr output. This is exported for use by Phase 5 tests.
+func RunBufDepUpdate(t *testing.T, bufBinary string, port int) (int, string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	bufYAML := fmt.Sprintf(`version: v1
+deps:
+  - 127.0.0.1:%d/googleapis/googleapis
+`, port)
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600), "writing buf.yaml")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bufBinary, "dep", "update")
+	cmd.Dir = tmpDir
+	cmd.Env = os.Environ()
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	exitErr := cmd.Run()
+
+	exitCode := 0
+	if exitErr != nil {
+		if exitCodeErr, ok := exitErr.(*exec.ExitError); ok {
+			exitCode = exitCodeErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+
+	if exitCode == 0 {
+		require.FileExists(t, filepath.Join(tmpDir, "buf.lock"), "buf.lock not created after successful buf dep update")
+	}
+
+	return exitCode, stderr.String()
+}
