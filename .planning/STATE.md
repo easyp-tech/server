@@ -2,8 +2,8 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: dependency-modernization
-status: planning
-stopped_at: Phase 6 context gathered, ready for planning
+status: planned
+stopped_at: Phase 6 planned, ready to execute
 last_activity: 2026-05-07 — Phase 6 context discussed
 last_updated: "2026-05-07T22:35:00.000Z"
 last_activity: 2026-05-07 — Milestone v1.2 roadmap defined (Phase 6-7)
@@ -27,9 +27,9 @@ See: .planning/PROJECT.md (updated 2026-05-07)
 
 ## Current Position
 
-Phase: Not started (roadmap defined)
-Plan: —
-Status: Phase 6 planning
+Phase: 6 — Dependency Upgrades
+Plan: 06-01 (go.mod/go/dockerfile), 06-02 (tidy/build/test)
+Status: Ready to execute
 Last activity: 2026-05-07 — Milestone v1.2 roadmap defined
 
 Progress: [░░░░░░░░░░] 0%

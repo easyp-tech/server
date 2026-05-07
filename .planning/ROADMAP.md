@@ -32,8 +32,8 @@ Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 
 **Plans**: 2 plans
 
-- [ ] 06-01: Update go.mod to Go 1.26 and upgrade all dependencies to latest
-- [ ] 06-02: Run `go mod tidy` and verify `go build ./...` passes
+- [x] 06-01: Update go.mod to Go 1.26 and upgrade all dependencies to latest
+- [x] 06-02: Run `go mod tidy` and verify `go build ./...` passes
 
 ### Phase 7: Proto Regeneration & Verification
 
@@ -62,5 +62,5 @@ Phases execute in numeric order: 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Dependency Upgrades | 0/2 | In Progress | — |
+| 6. Dependency Upgrades | 2/2 | Ready to execute | — |
 | 7. Proto Regeneration & Verification | 0/2 | Pending | — |
