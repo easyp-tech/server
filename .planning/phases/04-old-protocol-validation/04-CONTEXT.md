@@ -17,7 +17,7 @@ Confirm buf v1.30.1 still works against the updated proxy using real binaries an
 - **D-01:** OLD-01 is verified by the existing smoke test (`e2e/smoke_test.go` `TestSmokeBufModUpdate` with `buf_v1.30.1` subtest). No additional test needed — the smoke test confirms `buf mod update` exit code 0 and `buf.lock` creation with v1.30.1.
 
 ### OLD-02 test structure
-- **D-02:** Two-step test — first run `buf mod update` to create `buf.lock`, then run `buf dep update` on the same workspace. Both commands use v1.30.1 binary against the real TLS proxy.
+- **D-02:** Two-step test — first run `buf mod update` to create `buf.lock`, then run `buf mod update` again on the same workspace (reinterpreting "buf dep update" — that command does not exist in buf v1.30.1, introduced in v1.32.0; both commands are functionally identical, calling the same GetModulePins + DownloadManifestAndBlobs RPCs). Both steps use v1.30.1 binary against the real TLS proxy.
 - **D-03:** Validation is exit code 0 only — keep tests simple. No buf.lock content inspection.
 
 ### Failure diagnostics

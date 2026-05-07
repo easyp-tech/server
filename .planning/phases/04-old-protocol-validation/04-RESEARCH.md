@@ -354,22 +354,13 @@ deps:
 - A3: HIGH confidence -- Phase 4 is validation only, confirmed by CONTEXT.md and REQUIREMENTS.md.
 - A4: HIGH confidence -- the workspace pattern is straightforward Go; the pitfall is about `RunBufModUpdate`'s internal `t.TempDir()`, not the pattern itself.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **How should OLD-02 be reinterpreted given v1.30.1 lacks `buf dep update`?**
-   - What we know: v1.30.1 only has `buf mod update`. The `buf dep update` command was introduced in v1.32.0. Both commands are functionally identical (same RPC calls).
-   - What's unclear: Whether the user intended OLD-02 to test a different code path than OLD-01, or simply to confirm that dependency operations work in general with v1.30.1.
-   - Recommendation: Run `buf mod update` twice -- first creates `buf.lock`, second updates it. This validates a different execution path than the initial smoke test (fresh vs. existing lock). Flag for user confirmation.
+1. **How should OLD-02 be reinterpreted given v1.30.1 lacks `buf dep update`?** — RESOLVED: User confirmed two-step `buf mod update` (Option 1). Plan implements this as `TestOldProtocolBufModUpdateTwice`.
 
-2. **Should StartServer return the server output buffer?**
-   - What we know: D-04 requires surfacing server output on failure. StartServer currently captures output in a local buffer.
-   - What's unclear: Whether to modify StartServer's signature (breaking change to existing tests) or add a separate mechanism.
-   - Recommendation: Add a `ServerOutput()` method or return a struct `{Port int; Output *bytes.Buffer}`. This is at Claude's discretion per the existing helper design.
+2. **Should StartServer return the server output buffer?** — RESOLVED: Plan uses `ServerResult{Port int, Output *bytes.Buffer}` struct return type. Exposes output for D-04 failure diagnostics.
 
-3. **Should the OLD-02 test use table-driven subtests like the smoke test?**
-   - What we know: The smoke test uses table-driven subtests for v1.30.1 and v1.69.0. OLD-02 is specifically v1.30.1 only (Phase 5 handles v1.69.0).
-   - What's unclear: Whether to include v1.69.0 in the same test for completeness.
-   - Recommendation: No -- Phase 5 handles NEW-01/NEW-02 with v1.69.0. Keep Phase 4 focused on v1.30.1 only.
+3. **Should the OLD-02 test use table-driven subtests like the smoke test?** — RESOLVED: Standalone test, v1.30.1 only. Phase 5 handles v1.69.0.
 
 ## Environment Availability
 
