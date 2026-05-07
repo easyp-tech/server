@@ -71,11 +71,11 @@ Plans:
 **Requirements**: OLD-01, OLD-02
 **Success Criteria** (what must be TRUE):
   1. `buf mod update` succeeds against the proxy using buf v1.30.1 binary with a real GitHub provider and produces a valid `buf.lock` file
-  2. `buf dep update` succeeds against the proxy using buf v1.30.1 binary with a real GitHub provider
-**Plans**: TBD
+  2. `buf dep update` (reinterpreted as two-step `buf mod update`) succeeds against the proxy using buf v1.30.1 binary with a real GitHub provider
+**Plans**: 1 plan
 
 Plans:
-- [ ] 04-01: Write and run old protocol integration tests
+- [ ] 04-01-PLAN.md — Expose server output from StartServer and create two-step buf mod update test for OLD-02
 
 ### Phase 5: New Protocol Validation
 **Goal**: Modern buf CLI support confirmed — buf v1.69.0+ commands work against the proxy, and any required new RPC implementations are identified
