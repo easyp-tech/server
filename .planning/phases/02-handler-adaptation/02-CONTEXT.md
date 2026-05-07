@@ -6,7 +6,7 @@
 <domain>
 ## Phase Boundary
 
-Ensure the proxy's handler layer works correctly with the regenerated v1.69.0 proto types. The existing RPC implementations must compile and function against the new generated code. A basic E2E smoke test confirms the server starts and old buf CLI (v1.30.1) can communicate with it. New RPCs (GetSDKInfo, GetCargoVersion, etc.) are left as Unimplemented — their requirements will be discovered empirically in Phase 5.
+Ensure the proxy's handler layer works correctly with the regenerated v1.69.0 proto types. The existing RPC implementations must compile and function against the new generated code. E2E smoke tests confirm both old buf CLI (v1.30.1) and modern buf CLI (v1.69.0+) can communicate with the proxy. New RPCs (GetSDKInfo, GetCargoVersion, etc.) are left as Unimplemented — their requirements will be discovered empirically.
 
 </domain>
 
@@ -20,8 +20,8 @@ Ensure the proxy's handler layer works correctly with the regenerated v1.69.0 pr
 - **D-02:** Leave `manifest_digest` field empty in ModulePin responses. Do not compute or populate it. Phase 5 will discover through empirical testing whether modern buf CLI requires it populated.
 
 ### Verification approach
-- **D-03:** Include a basic E2E smoke test in Phase 2: start the TLS proxy server, run `buf mod update` with old buf binary (v1.30.1) against the proxy, verify it succeeds. This provides early validation that the handler adaptation works end-to-end.
-- **D-04:** The E2E smoke test should use minimal test infrastructure — TLS server startup using `~/local-tls/server/` certs, buf v1.30.1 binary on PATH, GitHub API token from environment variable. Phase 3 will formalize this into reusable test helpers.
+- **D-03:** Include E2E smoke tests for BOTH old and modern buf CLI versions in Phase 2: start the TLS proxy server, run `buf mod update` with buf v1.30.1 AND buf v1.69.0+ against the proxy, verify both succeed. This provides early validation for both protocol variants end-to-end.
+- **D-04:** The E2E smoke tests should use minimal test infrastructure — TLS server startup using `~/local-tls/server/` certs, both buf binaries available on PATH, GitHub API token from environment variable. Phase 3 will formalize this into reusable test helpers.
 
 ### HAND-01 status
 - **D-05:** HAND-01 (handler structs embed new Unimplemented* types) is effectively already complete from Phase 1 — the regenerated code expanded the Unimplemented types, and the existing embedding in `api.go` satisfies all expanded interfaces. No handler struct changes needed.
@@ -84,8 +84,8 @@ Ensure the proxy's handler layer works correctly with the regenerated v1.69.0 pr
 <specifics>
 ## Specific Ideas
 
-- E2E smoke test should use `buf mod update` with buf v1.30.1 binary as the primary validation command — this is the core user-facing operation the proxy supports.
-- Test needs: GitHub API token (env var), TLS certs (~/local-tls/server/), buf v1.30.1 binary on PATH.
+- E2E smoke tests should run `buf mod update` with BOTH buf v1.30.1 and buf v1.69.0+ binaries — validates both old and modern protocol compatibility.
+- Test needs: GitHub API token (env var), TLS certs (~/local-tls/server/), buf v1.30.1 and buf v1.69.0+ binaries on PATH.
 
 </specifics>
 
