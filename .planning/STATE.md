@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.30.1
 milestone_name: milestone
-status: ready to execute
-stopped_at: Phase 5 planned
-last_updated: "2026-05-07T20:00:00.000Z"
-last_activity: 2026-05-07 — Phase 5 planned (2 plans, 2 waves)
+status: complete
+stopped_at: All phases complete
+last_updated: "2026-05-07T21:30:00.000Z"
+last_activity: 2026-05-07 — Phase 5 complete, all 5 phases done
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 8
-  completed_plans: 6
-  percent: 90
+  completed_plans: 8
+  percent: 100
 ---
 
 # Project State
@@ -21,24 +21,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-07)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
-**Current focus:** Phase 5 planned — ready to execute
+**Current focus:** Complete — all phases executed successfully
 
 ## Current Position
 
-Phase: 5 of 5 (New Protocol Validation) — PLANNED
-Plan: 0 of 2 in current phase
-Status: Phase 5 planned (2 plans, 2 waves), ready to execute
-Last activity: 2026-05-07 — Phase 5 planning complete
+Phase: 5 of 5 (New Protocol Validation) — COMPLETE
+Plan: 2 of 2 in current phase
+Status: All phases complete, project goal achieved
+Last activity: 2026-05-07 — Phase 5 executed and verified
 
-Progress: [█████████░] 90%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6 (8 total planned)
-- Average duration: ~3 min
-- Total execution time: ~18 min
+- Total plans completed: 8 (8 total planned)
+- Average duration: ~6 min
+- Total execution time: ~50 min
 
 **By Phase:**
 
@@ -48,13 +48,12 @@ Progress: [█████████░] 90%
 | 2. Handler Adaptation | 1 | 4 min | ~4 min |
 | 3. Test Infrastructure | 2 | ~7 min | ~3.5 min |
 | 4. Old Protocol Validation | 1 | ~3 min | ~3 min |
+| 5. New Protocol Validation | 2 | ~48 min | ~24 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 3.5min, 3.5min, 4min, 3min
-- Trend: Stable
-
-*Updated after each plan completion*
+- Phase 5 was the largest phase due to full v1beta1 protocol implementation
+- All tests pass consistently when network cooperates
 
 ## Accumulated Context
 
@@ -65,20 +64,21 @@ Recent decisions affecting current work:
 
 - Single superset handler (no dual-protocol architecture) — both old and new clients served by one handler generated from v1.69.0 protos
 - connect-go v1.18.1 ceiling — latest version supporting Go 1.22; v1.19.x requires Go 1.24
-- buf v1.69.0 content-type mismatch — Modern buf expects `application/proto` but proxy returns `text/plain; charset=utf-8`. Escalated to Phase 5.
-- Phase 5: Investigate content-type with debug logging, fix in same plan
-- Phase 5: Empirical RPC discovery — test first, implement only what's needed
-- Phase 5: Test real `buf dep update` command, add RunBufDepUpdate helper to testutil
+- Manual protobuf wire encoding for v1beta1 responses — avoids complex proto dependencies
+- In-memory caching across RPC chain — GetCommits is the only expensive call
+- IPv4-only dialer in GitHub client — avoids IPv6 TLS timeouts on macOS
 
 ### Pending Todos
 
-None yet.
+None — project complete.
 
 ### Blockers/Concerns
 
-- **buf v1.69.0 content-type mismatch:** Modern buf expects `application/proto` content type but proxy returns `text/plain; charset=utf-8`. Investigation planned in Phase 5.
-- **Phase 5 unknown RPCs:** GetSDKInfo and other RPCs may be called by modern buf CLI. Empirical discovery approach planned.
-- **manifest_digest field:** Modern ModulePin includes this field. Unknown whether modern buf CLI requires it populated. May surface during Phase 5 validation.
+None — all blockers resolved during Phase 5:
+
+- Content-type mismatch: resolved (v1beta1 handlers use `application/proto`)
+- Unknown RPCs: discovered and implemented (GetCommits, GetGraph, Download, GetModules)
+- manifest_digest: implemented with real B4 digest computation
 
 ## Deferred Items
 
@@ -90,6 +90,5 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-05-07T20:00:00.000Z
-Stopped at: Phase 5 planned (2 plans, 2 waves)
-Resume file: .planning/phases/05-new-protocol-validation/05-01-PLAN.md
+Last session: 2026-05-07T21:30:00.000Z
+Stopped at: All phases complete

@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Handler Adaptation** - Update handler structs to embed new Unimplemented types, verify all RPCs compile and serve *(completed 2026-05-07)*
 - [x] **Phase 3: Test Infrastructure** - Build reusable test helpers for TLS server, buf binary management, and GitHub API integration *(completed 2026-05-07)*
 - [x] **Phase 4: Old Protocol Validation** - Confirm buf v1.30.1 still works against the updated proxy using real binaries and real GitHub API *(completed 2026-05-07)*
-- [ ] **Phase 5: New Protocol Validation** - Confirm buf v1.69.0+ works against the proxy, discover any required new RPC implementations
+- [x] **Phase 5: New Protocol Validation** - Confirm buf v1.69.0+ works against the proxy, discover any required new RPC implementations *(completed 2026-05-07)*
 
 ## Phase Details
 
@@ -87,8 +87,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Add RunBufDepUpdate helper and write new protocol tests with debug logging for v1.69.0
-- [ ] 05-02-PLAN.md — Fix any RPC implementation blockers discovered by Plan 05-01 testing
+- [x] 05-01-PLAN.md — Add RunBufDepUpdate helper and write new protocol tests with debug logging for v1.69.0
+- [x] 05-02-PLAN.md — Fix any RPC implementation blockers discovered by Plan 05-01 testing
 
 ## Progress
 
@@ -101,4 +101,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | 2. Handler Adaptation | 1/1 | Complete | 2026-05-07 |
 | 3. Test Infrastructure | 2/2 | Complete | 2026-05-07 |
 | 4. Old Protocol Validation | 1/1 | Complete | 2026-05-07 |
-| 5. New Protocol Validation | 0/2 | Not started | - |
+| 5. New Protocol Validation | 2/2 | Complete | 2026-05-07 |
