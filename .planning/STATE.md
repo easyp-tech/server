@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.30.1
 milestone_name: milestone
-status: ready to execute
-stopped_at: Phase 4 planned
-last_updated: "2026-05-07T16:00:00.000Z"
-last_activity: 2026-05-07 — Phase 4 planned, 1 plan in 1 wave
+status: phase complete
+stopped_at: Phase 4 complete
+last_updated: "2026-05-07T17:30:00.000Z"
+last_activity: 2026-05-07 — Phase 4 complete, 1/1 plans done
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 5
-  completed_plans: 5
-  percent: 80
+  completed_phases: 4
+  total_plans: 6
+  completed_plans: 6
+  percent: 90
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-07)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
-**Current focus:** Phase 4 context gathered — ready for planning
+**Current focus:** Phase 4 complete — ready for Phase 5 (New Protocol Validation)
 
 ## Current Position
 
-Phase: 4 of 5 (Old Protocol Validation) — PLANNED
-Plan: 0 of 1 in current phase
-Status: Planned, ready to execute
-Last activity: 2026-05-07 — Phase 4 planned, 1 plan in 1 wave
+Phase: 5 of 5 (New Protocol Validation) — NOT STARTED
+Plan: 0 of 2 in current phase
+Status: Phase 4 complete, Phase 5 next
+Last activity: 2026-05-07 — Phase 4 complete, 1/1 plans done
 
-Progress: [████████░░] 80%
+Progress: [█████████░] 90%
 
 ## Performance Metrics
 
