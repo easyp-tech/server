@@ -42,13 +42,12 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Handler structs in `internal/connect/` embed the new `Unimplemented*Handler` types from regenerated code and the server starts without panics
   2. Existing RPCs (`GetModulePins`, `DownloadManifestAndBlobs`, `GetRepositoryByFullName`, `GetRepositoriesByFullName`) compile and return correct response types for known request patterns
-  3. `GetSDKInfo` returns a gRPC `CodeUnimplemented` error (or a valid response if empirical testing shows modern buf requires it)
-  4. `ModulePin` responses include `manifest_digest` field populated when available
-**Plans**: TBD
+  3. `GetSDKInfo` returns a gRPC `CodeUnimplemented` error (per D-01)
+  4. `ModulePin` responses include `manifest_digest` field present but empty (per D-02)
+**Plans**: 1 plan
 
 Plans:
-- [ ] 02-01: Update handler structs to embed new Unimplemented types
-- [ ] 02-02: Handle GetSDKInfo and manifest_digest field
+- [ ] 02-01-PLAN.md — Verify handler adaptation baseline and run E2E smoke tests for both buf CLI versions
 
 ### Phase 3: Test Infrastructure
 **Goal**: Reusable test helpers exist for starting a TLS proxy server, managing pinned buf binaries, and making authenticated GitHub API calls
@@ -100,7 +99,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Code Generation | 2/2 | Complete | 2026-05-07 |
-| 2. Handler Adaptation | 0/2 | Not started | - |
+| 2. Handler Adaptation | 0/1 | Not started | - |
 | 3. Test Infrastructure | 0/3 | Not started | - |
 | 4. Old Protocol Validation | 0/1 | Not started | - |
 | 5. New Protocol Validation | 0/2 | Not started | - |
