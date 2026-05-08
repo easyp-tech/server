@@ -87,7 +87,8 @@ Phases execute in numeric order: 6 → 7
 |-------|----------------|--------|-----------|
 | 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
 | 7. Proto Regeneration & Verification | 2/2 | Complete | 2026-05-08 |
-| 8. Go Code Modernization | 0/? | Pending | — |
+| 8. Go Code Modernization | 1/1 | Complete | 2026-05-08 |
+| 9. Submodule Cleanup | 0/? | Pending | — |
 
 All 7 v1 requirements satisfied:
 - DEPS-01 through DEPS-04: Phase 6 (Go 1.26, connect-go v1.19.x, all deps updated)

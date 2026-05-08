@@ -4,7 +4,7 @@ milestone: v1.2
 milestone_name: dependency-modernization
 status: milestone_complete
 stopped_at: Milestone v1.2 complete
-last_activity: 2026-05-08 — Phase 7 complete, milestone v1.2 finished
+last_activity: 2026-05-08 — Phase 9 context gathered, ready for planning
 last_updated: "2026-05-08T00:00:00.000Z"
 progress:
   total_phases: 2
