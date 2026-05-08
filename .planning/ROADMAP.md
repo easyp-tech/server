@@ -54,6 +54,22 @@ Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 - [x] 07-01: Regenerate proto code and verify compilation with updated connect-go
 - [x] 07-02: Run full E2E test suite with both buf v1.30.1 and v1.69.0+ to confirm everything works
 
+### Phase 8: Go Code Modernization
+
+**Goal**: Modernize Go code using `go fix`, replace deprecated `golang.org/x/exp` imports with stdlib equivalents
+
+**Depends on**: Phase 7
+
+**Success Criteria** (observable outcomes):
+
+1. `go fix ./...` runs cleanly and applies all recommended modernizations
+2. All `golang.org/x/exp/slog` imports replaced with `log/slog`
+3. All `golang.org/x/exp/slices` imports replaced with `slices`
+4. `go build ./...` passes without errors
+5. E2E tests pass after modernization
+
+**Plans**: TBD
+
 ## Progress
 
 **Execution Order:**
@@ -65,7 +81,13 @@ Phases execute in numeric order: 6 → 7
 | 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
 | 7. Proto Regeneration & Verification | 2/2 | Complete | 2026-05-08 |
 
-**Milestone v1.2: COMPLETE** (2026-05-08)
+**Milestone v1.2: In Progress**
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
+| 7. Proto Regeneration & Verification | 2/2 | Complete | 2026-05-08 |
+| 8. Go Code Modernization | 0/? | Pending | — |
 
 All 7 v1 requirements satisfied:
 - DEPS-01 through DEPS-04: Phase 6 (Go 1.26, connect-go v1.19.x, all deps updated)
