@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"golang.org/x/exp/slices"
-	"golang.org/x/exp/slog"
+	"log/slog"
+	"slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"

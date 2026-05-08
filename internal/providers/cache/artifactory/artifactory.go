@@ -10,8 +10,9 @@ import (
 	"net/http"
 	"strings"
 
+	"log/slog"
+
 	"github.com/easyp-tech/server/internal/providers/content"
-	"golang.org/x/exp/slog"
 )
 
 var (

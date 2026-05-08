@@ -6,8 +6,8 @@ import (
 	"hash/crc32"
 	"net/url"
 
-	"golang.org/x/exp/slices"
-	"golang.org/x/exp/slog"
+	"log/slog"
+	"slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"

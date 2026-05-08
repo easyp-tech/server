@@ -9,7 +9,6 @@ require (
 	github.com/google/go-github/v59 v59.0.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.50.0
-	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f
 	google.golang.org/protobuf v1.36.11
 )
 

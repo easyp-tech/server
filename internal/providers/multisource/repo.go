@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"

@@ -6,8 +6,9 @@ import (
 	"io"
 	"strings"
 
+	"slices"
+
 	"github.com/google/go-github/v59/github"
-	"golang.org/x/exp/slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"

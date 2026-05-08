@@ -10,9 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"slices"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"golang.org/x/exp/slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"

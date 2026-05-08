@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 
 	connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"
@@ -51,7 +51,7 @@ func New(
 	commitHandler := &commitServiceHandler{
 		api: a, commitMap: make(map[string]moduleRef),
 		infoCache: make(map[string]commitInfoCache),
-		filesMap: make(map[string][]content.File),
+		filesMap:  make(map[string][]content.File),
 	}
 	mux.HandleFunc("/buf.registry.module.v1beta1.CommitService/", commitHandler.ServeHTTP)
 	mux.HandleFunc("/buf.registry.module.v1beta1.GraphService/", commitHandler.ServeGraph)

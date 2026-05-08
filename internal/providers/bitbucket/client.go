@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"text/template"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type client struct {

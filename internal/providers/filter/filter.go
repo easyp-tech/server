@@ -5,7 +5,7 @@ import (
 	"hash/crc32"
 	"strings"
 
-	"golang.org/x/exp/slices"
+	"slices"
 )
 
 const ProtoSuffix = ".proto"

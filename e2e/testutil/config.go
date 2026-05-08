@@ -115,9 +115,9 @@ func findProjectRoot(t *testing.T) string {
 	require.True(t, ok, "runtime.Caller failed")
 
 	// This file is at <project-root>/e2e/testutil/config.go
-	dir := filepath.Dir(filename)     // e2e/testutil/
-	dir = filepath.Dir(dir)            // e2e/
-	root := filepath.Dir(dir)          // project root
+	dir := filepath.Dir(filename) // e2e/testutil/
+	dir = filepath.Dir(dir)       // e2e/
+	root := filepath.Dir(dir)     // project root
 
 	// Verify it's the project root by checking go.mod
 	goModPath := filepath.Join(root, "go.mod")
