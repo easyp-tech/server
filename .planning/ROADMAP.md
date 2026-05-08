@@ -11,7 +11,7 @@ Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 
 - [x] **Phase 6: Dependency Upgrades** — Update Go to 1.26, connect-go to v1.19.x, and all other dependencies to latest; verify `go build ./...` passes (2026-05-08)
 
-- [ ] **Phase 7: Proto Regeneration & Verification** — Regenerate proto code with new connect-go, update handler structs for new Unimplemented* types, verify E2E tests pass with both buf versions
+- [x] **Phase 7: Proto Regeneration & Verification** — Regenerate proto code with new connect-go, update handler structs for new Unimplemented* types, verify E2E tests pass with both buf versions (2026-05-08)
 
 ## Phase Details
 
@@ -46,13 +46,13 @@ Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 **Success Criteria** (observable outcomes):
 
 1. `go generate` produces new proto code from existing buf submodule that compiles against connect-go v1.19.x
-2. Handler structs in `internal/connect/` embed the new `Unimplemented*Handler` types and compile without errors
+2. Handler structs in `internal/connect/` embed the `Unimplemented*Handler` types and compile without errors
 3. E2E tests pass with both buf v1.30.1 and v1.69.0+ after the dependency and code generation updates
 
 **Plans**: 2 plans
 
-- [ ] 07-01: Regenerate proto code and verify compilation with updated connect-go
-- [ ] 07-02: Run full E2E test suite with both buf v1.30.1 and v1.69.0+ to confirm everything works
+- [x] 07-01: Regenerate proto code and verify compilation with updated connect-go
+- [x] 07-02: Run full E2E test suite with both buf v1.30.1 and v1.69.0+ to confirm everything works
 
 ## Progress
 
@@ -63,4 +63,14 @@ Phases execute in numeric order: 6 → 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
-| 7. Proto Regeneration & Verification | 0/2 | In Progress | — |
+| 7. Proto Regeneration & Verification | 2/2 | Complete | 2026-05-08 |
+
+**Milestone v1.2: COMPLETE** (2026-05-08)
+
+All 7 v1 requirements satisfied:
+- DEPS-01 through DEPS-04: Phase 6 (Go 1.26, connect-go v1.19.x, all deps updated)
+- DEPS-05 through DEPS-07: Phase 7 (proto regenerated, handlers compile, E2E tests pass)
+
+---
+
+*Roadmap last updated: 2026-05-08*

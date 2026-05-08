@@ -8,13 +8,13 @@
 
 ### Dependency Upgrades
 
-- [ ] **DEPS-01**: Build passes with Go 1.26
-- [ ] **DEPS-02**: connect-go upgraded to v1.19.x (requires Go 1.24+)
-- [ ] **DEPS-03**: All other dependencies updated to latest compatible versions
-- [ ] **DEPS-04**: `go mod tidy` produces no version conflicts
-- [ ] **DEPS-05**: Regenerated proto code compiles against new connect-go
-- [ ] **DEPS-06**: E2E tests pass with both buf v1.30.1 and v1.69.0+ after upgrades
-- [ ] **DEPS-07**: Handler structs compile with new generated Unimplemented* types
+- [x] **DEPS-01**: Build passes with Go 1.26
+- [x] **DEPS-02**: connect-go upgraded to v1.19.x (requires Go 1.24+)
+- [x] **DEPS-03**: All other dependencies updated to latest compatible versions
+- [x] **DEPS-04**: `go mod tidy` produces no version conflicts
+- [x] **DEPS-05**: Regenerated proto code compiles against new connect-go
+- [x] **DEPS-06**: E2E tests pass with both buf v1.30.1 and v1.69.0+ after upgrades
+- [x] **DEPS-07**: Handler structs compile with new generated Unimplemented* types
 
 ## v2 Requirements
 
@@ -44,21 +44,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEPS-01 | Phase 6 | Pending |
-| DEPS-02 | Phase 6 | Pending |
-| DEPS-03 | Phase 6 | Pending |
-| DEPS-04 | Phase 6 | Pending |
-| DEPS-05 | Phase 7 | Pending |
-| DEPS-06 | Phase 7 | Pending |
-| DEPS-07 | Phase 7 | Pending |
+| DEPS-01 | Phase 6 | Done |
+| DEPS-02 | Phase 6 | Done |
+| DEPS-03 | Phase 6 | Done |
+| DEPS-04 | Phase 6 | Done |
+| DEPS-05 | Phase 7 | Done |
+| DEPS-06 | Phase 7 | Done |
+| DEPS-07 | Phase 7 | Done |
 
 **Coverage:**
 
 - v1 requirements: 7 total
 - Mapped to phases: 7
 - Unmapped: 0 ✓
+- Complete: 7/7 ✓
 
 ---
 
 *Requirements defined: 2026-05-07*
-*Last updated: 2026-05-07 after roadmap creation — 100% phase coverage verified*
+*Last updated: 2026-05-08 after Phase 7 completion — all v1 requirements satisfied*
