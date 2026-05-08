@@ -9,7 +9,7 @@ Upgrade Go from 1.22 to 1.26, update all dependencies to their latest compatible
 **Phase Numbering:**
 Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 
-- [ ] **Phase 6: Dependency Upgrades** — Update Go to 1.26, connect-go to v1.19.x, and all other dependencies to latest; verify `go build ./...` passes
+- [x] **Phase 6: Dependency Upgrades** — Update Go to 1.26, connect-go to v1.19.x, and all other dependencies to latest; verify `go build ./...` passes (2026-05-08)
 
 - [ ] **Phase 7: Proto Regeneration & Verification** — Regenerate proto code with new connect-go, update handler structs for new Unimplemented* types, verify E2E tests pass with both buf versions
 
@@ -62,5 +62,5 @@ Phases execute in numeric order: 6 → 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 6. Dependency Upgrades | 2/2 | Ready to execute | — |
-| 7. Proto Regeneration & Verification | 0/2 | Pending | — |
+| 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
+| 7. Proto Regeneration & Verification | 0/2 | In Progress | — |
