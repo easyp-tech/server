@@ -68,7 +68,29 @@ Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 4. `go build ./...` passes without errors
 5. E2E tests pass after modernization
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+- [x] 08-01: Apply go fix and replace deprecated exp imports
+
+### Phase 9: Submodule Cleanup
+
+**Goal**: Clean up the API submodule structure — remove old `buf` submodule, promote `buf-v1.69.0` to canonical `buf`, update code generation, regenerate and verify
+
+**Depends on**: Phase 8
+
+**Success Criteria** (observable outcomes):
+
+1. `api/_third_party/buf` submodule removed (old protocol deprecated)
+2. `api/_third_party/buf-v1.69.0` renamed to `api/_third_party/buf` via `git mv` (preserves history)
+3. `.gitmodules` updated to single buf entry at `api/_third_party/buf`
+4. `api/proto/generate.go` updated to copy from `../_third_party/buf/proto/buf`
+5. `go generate` produces fresh proto code without errors
+6. `go build ./...` passes with regenerated code
+7. E2E tests pass
+
+**Plans**: 1 plan
+
+- [ ] 09-01: Submodule cleanup — remove old buf, rename buf-v1.69.0, update config, regenerate, test
 
 ## Progress
 
@@ -88,7 +110,7 @@ Phases execute in numeric order: 6 → 7
 | 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
 | 7. Proto Regeneration & Verification | 2/2 | Complete | 2026-05-08 |
 | 8. Go Code Modernization | 1/1 | Complete | 2026-05-08 |
-| 9. Submodule Cleanup | 0/? | Pending | — |
+| 9. Submodule Cleanup | 1/1 | Ready to execute | — |
 
 All 7 v1 requirements satisfied:
 - DEPS-01 through DEPS-04: Phase 6 (Go 1.26, connect-go v1.19.x, all deps updated)
