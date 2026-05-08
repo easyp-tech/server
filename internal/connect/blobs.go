@@ -64,4 +64,3 @@ func buildBlob(hash shake256.Hash, data []byte) *module.Blob {
 		Content: data,
 	}
 }
-

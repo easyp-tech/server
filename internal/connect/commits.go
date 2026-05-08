@@ -24,9 +24,9 @@ type commitServiceHandler struct {
 	api *api
 
 	commitMu  sync.RWMutex
-	commitMap map[string]moduleRef              // commitID → owner/module
-	infoCache map[string]commitInfoCache        // "owner/module" → cached commit info
-	filesMap  map[string][]content.File         // commitID → cached files
+	commitMap map[string]moduleRef       // commitID → owner/module
+	infoCache map[string]commitInfoCache // "owner/module" → cached commit info
+	filesMap  map[string][]content.File  // commitID → cached files
 }
 
 func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

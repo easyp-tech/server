@@ -49,6 +49,16 @@ Modernized Go code by replacing deprecated `golang.org/x/exp` imports with stdli
 - `internal/providers/filter/filter.go` — slices migrated
 - `go.mod` / `go.sum` — updated after go mod tidy
 
+## Execution Steps
+
+1. **go fix** — Ran `go fix ./...`, produced no changes (already modern on Go 1.26)
+2. **exp/slog migration** — Replaced `golang.org/x/exp/slog` → `log/slog` in 8 files
+3. **exp/slices migration** — Replaced `golang.org/x/exp/slices` → `slices` in 6 files
+4. **Import ordering** — Fixed with `goimports -w ...`
+5. **go mod tidy** — Cleaned module graph
+6. **golangci-lint update** — Reinstalled `golangci-lint@latest` (previous install was compiled with go1.25, incompatible with project Go 1.26)
+7. **Verification** — Build, vet, and E2E tests all passed
+
 ## Notes
 
 - `golangci-lint` not run due to version mismatch (compiled with go1.25 vs target go1.26). `go vet` used as lint verification instead.

@@ -3,9 +3,6 @@ package github
 import (
 	"context"
 	"io"
-	"net"
-	"net/http"
-	"time"
 
 	"log/slog"
 
@@ -37,22 +34,7 @@ type client struct {
 }
 
 func connect(log *slog.Logger, token string) client {
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
-	}
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext(ctx, "tcp4", addr)
-	}
-	httpClient := &http.Client{Transport: transport}
-	c := github.NewClient(httpClient)
+	c := github.NewClient(nil)
 
 	if token != "" {
 		c = c.WithAuthToken(token)
