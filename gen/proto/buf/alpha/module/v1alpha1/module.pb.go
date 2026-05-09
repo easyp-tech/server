@@ -21,14 +21,13 @@
 package v1alpha1
 
 import (
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
-
 	v1 "github.com/easyp-tech/server/gen/proto/buf/alpha/breaking/v1"
 	v11 "github.com/easyp-tech/server/gen/proto/buf/alpha/lint/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
 )
 
 const (
