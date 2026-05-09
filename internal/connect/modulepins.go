@@ -33,7 +33,7 @@ func (a *api) resolveModulePins(ctx context.Context, in []*module.ModuleReferenc
 	for i, m := range in {
 		v, err := a.resolveModulePin(ctx, m)
 		if err != nil {
-			return out, fmt.Errorf("iterating %d of %d: %w", i, len(in), err)
+			return nil, fmt.Errorf("iterating %d of %d: %w", i, len(in), err)
 		}
 
 		out = append(out, v)

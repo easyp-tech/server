@@ -39,6 +39,8 @@ type Proxy struct {
 type GithubRepo struct {
 	Repo        Repo   `json:"repo"`
 	AccessToken string `json:"token"`
+	Timeout     int    `json:"timeout"`
+	BodyLimit   int64  `json:"bodyLimit"`
 }
 
 type BitBucketRepo struct {
@@ -46,6 +48,8 @@ type BitBucketRepo struct {
 	User        string `json:"user"`
 	AccessToken string `json:"token"`
 	BaseURL     URL    `json:"url"`
+	Timeout     int    `json:"timeout"`
+	BodyLimit   int64  `json:"bodyLimit"`
 }
 
 type Repo struct {
@@ -69,4 +73,6 @@ type Artifactory struct {
 	User        string `json:"user"`
 	AccessToken string `json:"token"`
 	BaseURL     URL    `json:"url"`
+	Timeout     int    `json:"timeout"`
+	BodyLimit   int64  `json:"bodyLimit"`
 }

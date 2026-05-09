@@ -9,15 +9,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"log/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
+const defaultBodyLimit = 50 * 1 << 20 // 50MB
+
 var (
 	ErrUnexpected = errors.New("unexpected")
-	testFilePath  = "buf-proxy-connection-test.json"
+	testFilePath   = "buf-proxy-connection-test.json"
 )
 
 func New(
@@ -25,20 +28,29 @@ func New(
 	baseURL string,
 	user string,
 	password string,
+	timeout time.Duration,
+	bodyLimit int64,
 ) artifactory {
+	if bodyLimit <= 0 {
+		bodyLimit = defaultBodyLimit
+	}
 	return artifactory{
-		log:      log,
-		baseURL:  baseURL,
-		user:     user,
-		password: password,
+		log:       log,
+		baseURL:   baseURL,
+		user:      user,
+		password:  password,
+		client:    http.Client{Timeout: timeout},
+		bodyLimit: bodyLimit,
 	}
 }
 
 type artifactory struct {
-	log      *slog.Logger
-	baseURL  string
-	user     string
-	password string
+	log       *slog.Logger
+	baseURL   string
+	user      string
+	password  string
+	client    http.Client
+	bodyLimit int64
 }
 
 func (c artifactory) Get(
@@ -60,7 +72,7 @@ func (c artifactory) Get(
 
 	req.SetBasicAuth(c.user, c.password)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("getting %q: %w", req.URL.String(), err)
 	}
@@ -75,7 +87,7 @@ func (c artifactory) Get(
 		return nil, fmt.Errorf("getting %q: response %d: %w", req.URL.String(), resp.StatusCode, ErrUnexpected)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, c.bodyLimit))
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", req.URL.String(), err)
 	}
@@ -111,14 +123,14 @@ func (c artifactory) Put(ctx context.Context, owner, repoName, commit, configHas
 
 	req.SetBasicAuth(c.user, c.password)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("putting %q: %w", req.URL.String(), err)
 	}
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode < http.StatusOK && resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("putting %q: response %d: %w", req.URL.String(), resp.StatusCode, ErrUnexpected)
 	}
 
@@ -142,7 +154,7 @@ func (c artifactory) CheckWriteAccess(ctx context.Context) error {
 	req.SetBasicAuth(c.user, c.password)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("test write request failed: %w", err)
 	}
@@ -165,7 +177,7 @@ func (c artifactory) CheckWriteAccess(ctx context.Context) error {
 	}
 
 	req.SetBasicAuth(c.user, c.password)
-	resp, err = http.DefaultClient.Do(req)
+	resp, err = c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("test delete request failed: %w", err)
 	}

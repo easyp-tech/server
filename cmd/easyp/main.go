@@ -339,6 +339,8 @@ func buildCache(log *slog.Logger, cfg config.Cache) multisource.Cache { //nolint
 			cfg.Artifactory.BaseURL.String(),
 			cfg.Artifactory.User,
 			cfg.Artifactory.AccessToken,
+			time.Duration(cfg.Artifactory.Timeout)*time.Second,
+			cfg.Artifactory.BodyLimit,
 		)
 
 		return c

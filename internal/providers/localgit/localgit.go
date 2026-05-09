@@ -3,7 +3,6 @@ package localgit
 import (
 	"context"
 	"fmt"
-	"hash/crc32"
 	"io/fs"
 	"os"
 	"path"
@@ -110,7 +109,7 @@ type sourceRepo struct {
 }
 
 func (r sourceRepo) ConfigHash() string {
-	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo))))
+	return r.repo.Hash()
 }
 
 func (r sourceRepo) Name() string     { return "local git" }
