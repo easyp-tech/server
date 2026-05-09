@@ -90,7 +90,7 @@ Integer phases continue sequentially from v1.1 (which completed at Phase 5).
 
 **Plans**: 1 plan
 
-- [ ] 09-01: Submodule cleanup — remove old buf, rename buf-v1.69.0, update config, regenerate, test
+- [x] 09-01: Submodule cleanup — remove old buf, rename buf-v1.69.0, update config, regenerate, test
 
 ## Progress
 
@@ -110,12 +110,10 @@ Phases execute in numeric order: 6 → 7
 | 6. Dependency Upgrades | 2/2 | Complete | 2026-05-08 |
 | 7. Proto Regeneration & Verification | 2/2 | Complete | 2026-05-08 |
 | 8. Go Code Modernization | 1/1 | Complete | 2026-05-08 |
-| 9. Submodule Cleanup | 1/1 | Ready to execute | — |
+| 9. Submodule Cleanup | 1/1 | Complete | 2026-05-09 |
 
-All 7 v1 requirements satisfied:
-- DEPS-01 through DEPS-04: Phase 6 (Go 1.26, connect-go v1.19.x, all deps updated)
-- DEPS-05 through DEPS-07: Phase 7 (proto regenerated, handlers compile, E2E tests pass)
+All 9 v1 requirements satisfied (DEPS-01 through DEPS-07 completed in Phase 6-7, Phase 9 infrastructure cleanup):
 
 ---
 
-*Roadmap last updated: 2026-05-08*
+*Roadmap last updated: 2026-05-09*
