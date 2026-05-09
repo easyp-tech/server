@@ -4,6 +4,3 @@
 [submodule "api/_third_party/protobuf"]
 	path = api/_third_party/protobuf
 	url = https://github.com/protocolbuffers/protobuf.git
-[submodule "api/_third_party/buf-v1.69.0"]
-	path = api/_third_party/buf-v1.69.0
-	url = https://github.com/bufbuild/buf
