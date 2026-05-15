@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"
@@ -73,7 +73,7 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 
 	files, err := s.GetFiles(ctx, commit)
 	if err != nil {
-		return files, fmt.Errorf("getting files: %w", err)
+		return nil, fmt.Errorf("getting files: %w", err)
 	}
 
 	r.cachePut(ctx, owner, repoName, commit, s.ConfigHash(), files)

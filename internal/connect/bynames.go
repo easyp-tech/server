@@ -52,7 +52,7 @@ func (a *api) resolveReposByFullNames(ctx context.Context, in []string) ([]*regi
 	for i, name := range in {
 		v, err := a.resolveRepoByFullName(ctx, name)
 		if err != nil {
-			return out, fmt.Errorf("iterating %d of %d: %w", i, len(in), err)
+			return nil, fmt.Errorf("iterating %d of %d: %w", i, len(in), err)
 		}
 
 		out = append(out, v)
@@ -63,6 +63,9 @@ func (a *api) resolveReposByFullNames(ctx context.Context, in []string) ([]*regi
 
 func (a *api) resolveRepoByFullName(ctx context.Context, name string) (*registry.Repository, error) {
 	owner, repositoryName := splitRepoName(name)
+	if repositoryName == "" {
+		return nil, fmt.Errorf("invalid repository name %q: expected owner/repo format", name)
+	}
 
 	repo, err := a.repo.GetMeta(ctx, owner, repositoryName, "")
 	if err != nil {
@@ -86,6 +89,8 @@ func (a *api) resolveRepoByFullName(ctx context.Context, name string) (*registry
 
 func splitRepoName(name string) (string, string) {
 	fields := strings.Split(name, "/")
-
+	if len(fields) != 2 {
+		return "", ""
+	}
 	return fields[0], fields[1]
 }

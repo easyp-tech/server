@@ -4,14 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strings"
-
-	"github.com/google/go-github/v59/github"
-	"golang.org/x/exp/slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
-	"github.com/easyp-tech/server/internal/shake256"
+	"github.com/google/go-github/v59/github"
 )
 
 func (c client) GetFiles(
@@ -26,31 +22,13 @@ func (c client) GetFiles(
 		return nil, fmt.Errorf("listing %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
-	files, err := c.getFiles(ctx, owner, repoName, commit, filterEntries(tree.Entries, repo))
+	entries := content.FilterEntries(tree.Entries, func(e *github.TreeEntry) string { return e.GetPath() }, repo)
+	files, err := c.getFiles(ctx, owner, repoName, commit, entries)
 	if err != nil {
-		return files, fmt.Errorf("downloading %q/%q:%q: %w", owner, repoName, commit, err)
+		return nil, fmt.Errorf("downloading %q/%q:%q: %w", owner, repoName, commit, err)
 	}
 
 	return files, nil
-}
-
-type fileFiltered struct {
-	orig string
-	name string
-}
-
-func filterEntries(entries []*github.TreeEntry, repo filter.Repo) []fileFiltered {
-	out := make([]fileFiltered, 0, len(entries))
-
-	for _, entry := range entries {
-		if name, ok := repo.Check(entry.GetPath()); ok {
-			out = append(out, fileFiltered{orig: entry.GetPath(), name: name})
-		}
-	}
-
-	slices.SortFunc(out, func(a, b fileFiltered) int { return strings.Compare(a.name, b.name) })
-
-	return out
 }
 
 func (c client) getFiles(
@@ -58,25 +36,11 @@ func (c client) getFiles(
 	owner string,
 	repoName string,
 	commit string,
-	files []fileFiltered,
+	entries []content.FileEntry,
 ) ([]content.File, error) {
-	out := make([]content.File, 0, len(files))
-
-	for _, file := range files {
-		data, err := c.getFile(ctx, owner, repoName, commit, file.orig)
-		if err != nil {
-			return nil, fmt.Errorf("downloading %q: %w", file, err)
-		}
-
-		hash, err := shake256.SHA3Shake256(data)
-		if err != nil {
-			return nil, fmt.Errorf("hashing %q: %w", file, err)
-		}
-
-		out = append(out, content.File{Path: file.name, Data: data, Hash: hash})
-	}
-
-	return out, nil
+	return content.GetFiles(ctx, entries, func(ctx context.Context, orig string) ([]byte, error) {
+		return c.getFile(ctx, owner, repoName, commit, orig)
+	})
 }
 
 func (c client) getFile(

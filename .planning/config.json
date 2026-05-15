@@ -1,0 +1,16 @@
+{
+  "mode": "yolo",
+  "depth": "comprehensive",
+  "model_profile": "quality",
+  "commit_docs": true,
+  "parallelization": true,
+  "branching_strategy": "none",
+  "workflow": {
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "auto_advance": false,
+    "nyquist_validation": true
+  },
+  "resolve_model_ids": "omit"
+}

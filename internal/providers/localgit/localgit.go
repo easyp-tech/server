@@ -3,16 +3,16 @@ package localgit
 import (
 	"context"
 	"fmt"
-	"hash/crc32"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"slices"
+
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"golang.org/x/exp/slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
@@ -109,7 +109,7 @@ type sourceRepo struct {
 }
 
 func (r sourceRepo) ConfigHash() string {
-	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo))))
+	return r.repo.Hash()
 }
 
 func (r sourceRepo) Name() string     { return "local git" }

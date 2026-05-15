@@ -3,13 +3,9 @@ package bitbucket
 import (
 	"context"
 	"fmt"
-	"strings"
-
-	"golang.org/x/exp/slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
-	"github.com/easyp-tech/server/internal/shake256"
 )
 
 func (c client) GetFiles(
@@ -22,55 +18,23 @@ func (c client) GetFiles(
 		return nil, fmt.Errorf("listing %q: %w", commit, err)
 	}
 
-	files, err := c.getFiles(ctx, commit, filterEntries(tree, repo))
+	entries := content.FilterEntries(tree, func(s string) string { return s }, repo)
+	files, err := c.getFiles(ctx, commit, entries)
 	if err != nil {
-		return files, fmt.Errorf("downloading %q: %w", commit, err)
+		return nil, fmt.Errorf("downloading %q: %w", commit, err)
 	}
 
 	return files, nil
 }
 
-type fileFiltered struct {
-	orig string
-	name string
-}
-
-func filterEntries(entries []string, repo filter.Repo) []fileFiltered {
-	out := make([]fileFiltered, 0, len(entries))
-
-	for _, entry := range entries {
-		if name, ok := repo.Check(entry); ok {
-			out = append(out, fileFiltered{orig: entry, name: name})
-		}
-	}
-
-	slices.SortFunc(out, func(a, b fileFiltered) int { return strings.Compare(a.name, b.name) })
-
-	return out
-}
-
 func (c client) getFiles(
 	ctx context.Context,
 	commit string,
-	files []fileFiltered,
+	entries []content.FileEntry,
 ) ([]content.File, error) {
-	out := make([]content.File, 0, len(files))
-
-	for _, file := range files {
-		data, err := c.getFile(ctx, c.client, commit, file.orig)
-		if err != nil {
-			return nil, fmt.Errorf("downloading %q: %w", file, err)
-		}
-
-		hash, err := shake256.SHA3Shake256(data)
-		if err != nil {
-			return nil, fmt.Errorf("hashing %q: %w", file, err)
-		}
-
-		out = append(out, content.File{Path: file.name, Data: data, Hash: hash})
-	}
-
-	return out, nil
+	return content.GetFiles(ctx, entries, func(ctx context.Context, orig string) ([]byte, error) {
+		return c.getFile(ctx, c.client, commit, orig)
+	})
 }
 
 func (c client) getFile(

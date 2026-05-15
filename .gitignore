@@ -1,2 +1,7 @@
 .idea
 bin
+
+.claude/
+draft.txt
+
+testdata/buf/

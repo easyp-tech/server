@@ -10,9 +10,13 @@ import (
 	"net/http"
 	"net/url"
 	"text/template"
+	"time"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
+
+const defaultHTTPTimeout = 30 * time.Second
+const defaultBodyLimit = 50 * 1 << 20 // 50MB
 
 type client struct {
 	log    *slog.Logger
@@ -23,9 +27,11 @@ func connect(log *slog.Logger, user User, token Password, baseURL string) client
 	return client{
 		log: log,
 		client: httpClient{
-			basePath: baseURL,
-			user:     string(user),
-			password: string(token),
+			client:    http.Client{Timeout: defaultHTTPTimeout},
+			basePath:  baseURL,
+			user:      string(user),
+			password:  string(token),
+			bodyLimit: defaultBodyLimit,
 		},
 	}
 }
@@ -66,9 +72,11 @@ var (
 )
 
 type httpClient struct {
-	basePath string
-	user     string
-	password string
+	client    http.Client
+	basePath  string
+	user      string
+	password  string
+	bodyLimit int64
 }
 
 func (c httpClient) get(
@@ -91,7 +99,7 @@ func (c httpClient) get(
 	req.SetBasicAuth(c.user, c.password)
 	req.Header.Add("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("getting %q: %w", req.URL.String(), err)
 	}
@@ -102,7 +110,7 @@ func (c httpClient) get(
 		return nil, fmt.Errorf("getting %q: response %d: %w", req.URL.String(), resp.StatusCode, ErrUnexpected)
 	}
 
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, c.bodyLimit))
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", req.URL.String(), err)
 	}

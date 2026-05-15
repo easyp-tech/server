@@ -2,11 +2,9 @@ package github
 
 import (
 	"context"
-	"fmt"
-	"hash/crc32"
 
-	"golang.org/x/exp/slices"
-	"golang.org/x/exp/slog"
+	"log/slog"
+	"slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
@@ -66,7 +64,7 @@ type sourceRepo struct {
 }
 
 func (r sourceRepo) ConfigHash() string {
-	return fmt.Sprintf("%X", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%+v", r.repo.Repo))))
+	return r.repo.Hash()
 }
 
 func (r sourceRepo) Name() string     { return "github proxy" }

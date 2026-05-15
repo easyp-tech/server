@@ -4,8 +4,9 @@ import (
 	"context"
 	"io"
 
+	"log/slog"
+
 	"github.com/google/go-github/v59/github"
-	"golang.org/x/exp/slog"
 )
 
 const (

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"log/slog"
+
 	"github.com/easyp-tech/server/cmd/easyp/internal/config"
 	"github.com/easyp-tech/server/cmd/easyp/internal/config/cachetype"
 	"github.com/easyp-tech/server/internal/connect"
@@ -21,7 +23,6 @@ import (
 	"github.com/easyp-tech/server/internal/providers/localgit"
 	"github.com/easyp-tech/server/internal/providers/localgit/namedlocks"
 	"github.com/easyp-tech/server/internal/providers/multisource"
-	"golang.org/x/exp/slog"
 )
 
 //nolint:gochecknoglobals
@@ -338,6 +339,8 @@ func buildCache(log *slog.Logger, cfg config.Cache) multisource.Cache { //nolint
 			cfg.Artifactory.BaseURL.String(),
 			cfg.Artifactory.User,
 			cfg.Artifactory.AccessToken,
+			time.Duration(cfg.Artifactory.Timeout)*time.Second,
+			cfg.Artifactory.BodyLimit,
 		)
 
 		return c
