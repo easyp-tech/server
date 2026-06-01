@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"encoding/hex"
+	"strings"
 	"sync"
 
 	"github.com/easyp-tech/server/internal/providers/content"
@@ -60,10 +62,18 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		cid := deterministicID(meta.Commit)
+		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("computing digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError)
 			return
+		}
+		if isV1 {
+			digest, err = toB5Digest(digest)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("wrapping digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError)
+				return
+			}
 		}
 		commits = append(commits, commitInfo{
 			ownerID:  deterministicID(ref.owner),
@@ -124,9 +134,15 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Parse GetGraphRequest: field 1 (resource_refs) repeated GetGraphRequest_ResourceRef
-	// Each GetGraphRequest_ResourceRef has: field 1 (ResourceRef) + field 2 (Registry string)
-	refs := parseGetGraphResourceRefs(body)
+	// Parse GetGraphRequest - handle both v1 and v1beta1 formats:
+	// v1beta1: field 1 = repeated GetGraphRequest_ResourceRef { ResourceRef, Registry }
+	isV1 := !strings.Contains(r.URL.Path, "v1beta1")
+	var refs []moduleRef
+	if isV1 {
+		refs = parseGetGraphResourceRefsV1(body)
+	} else {
+		refs = parseGetGraphResourceRefs(body)
+	}
 	if len(refs) == 0 {
 		// Return empty graph
 		w.Header().Set("Content-Type", "application/proto")
@@ -170,6 +186,13 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 			http.Error(w, fmt.Sprintf("computing digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError)
 			return
 		}
+		if isV1 {
+			digest, err = toB5Digest(digest)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("converting digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError)
+				return
+			}
+		}
 		commits = append(commits, commitInfo{
 			ownerID:  deterministicID(ref.owner),
 			moduleID: deterministicID(ref.owner + "/" + ref.module),
@@ -180,25 +203,32 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		})
 	}
 
-	// Build Graph response:
-	//   GetGraphResponse { field 1: Graph { field 1: [Graph_Commit...], field 2: [Graph_Edge...] } }
-	//   Graph_Commit { field 1 (Commit), field 2 (Registry) }
+	// Build Graph response.
+	// v1:       Graph.commits = repeated Commit (direct, no wrapper, no registry)
+	// v1beta1:  Graph.commits = repeated Graph_Commit { Commit, Registry }
+	// Both:     GetGraphResponse { field 1: Graph { field 1: commits, field 2: edges (empty) } }
 	var graphMsg []byte
 	for _, c := range commits {
 		commit := buildCommitRaw(c.commitID, c.ownerID, c.moduleID, c.digest)
 
-		// Build Graph_Commit wrapper: field 1 (Commit), field 2 (Registry)
-		var graphCommit []byte
-		graphCommit = protowire.AppendTag(graphCommit, 1, protowire.BytesType)
-		graphCommit = append(graphCommit, protowire.AppendVarint(nil, uint64(len(commit)))...)
-		graphCommit = append(graphCommit, commit...)
-		graphCommit = protowire.AppendTag(graphCommit, 2, protowire.BytesType)
-		graphCommit = protowire.AppendString(graphCommit, h.api.domain)
+		if isV1 {
+			// v1: Commit goes directly into Graph.commits (field 1)
+			graphMsg = protowire.AppendTag(graphMsg, 1, protowire.BytesType)
+			graphMsg = append(graphMsg, protowire.AppendVarint(nil, uint64(len(commit)))...)
+			graphMsg = append(graphMsg, commit...)
+		} else {
+			// v1beta1: wrap in Graph_Commit { field 1 = Commit, field 2 = Registry }
+			var graphCommit []byte
+			graphCommit = protowire.AppendTag(graphCommit, 1, protowire.BytesType)
+			graphCommit = append(graphCommit, protowire.AppendVarint(nil, uint64(len(commit)))...)
+			graphCommit = append(graphCommit, commit...)
+			graphCommit = protowire.AppendTag(graphCommit, 2, protowire.BytesType)
+			graphCommit = protowire.AppendString(graphCommit, h.api.domain)
 
-		// Append to Graph.commits (field 1, repeated)
-		graphMsg = protowire.AppendTag(graphMsg, 1, protowire.BytesType)
-		graphMsg = append(graphMsg, protowire.AppendVarint(nil, uint64(len(graphCommit)))...)
-		graphMsg = append(graphMsg, graphCommit...)
+			graphMsg = protowire.AppendTag(graphMsg, 1, protowire.BytesType)
+			graphMsg = append(graphMsg, protowire.AppendVarint(nil, uint64(len(graphCommit)))...)
+			graphMsg = append(graphMsg, graphCommit...)
+		}
 	}
 
 	// Wrap Graph in GetGraphResponse: field 1 (Graph)
@@ -263,6 +293,9 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		}
 		cid = deterministicID(meta.Commit)
 		digest, _ = h.computeB4DigestFromFiles(files)
+		if !strings.Contains(r.URL.Path, "v1beta1") {
+			digest, _ = toB5Digest(digest)
+		}
 	}
 
 	commit := buildCommitRaw(cid, cached.ownerID, cached.moduleID, digest)
@@ -296,6 +329,17 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/proto")
 	_, _ = w.Write(respMsg)
 }
+func toB5Digest(b4Digest []byte) ([]byte, error) {
+	// B5 digest wraps B4 (shake256) value: SHA3-Shake256("shake256:" + hex(b4_hash))
+	// This matches buf's getB5DigestForBucketAndDepDigests with zero dependencies.
+	digestStr := "shake256:" + hex.EncodeToString(b4Digest)
+	hash, err := shake256.SHA3Shake256([]byte(digestStr))
+	if err != nil {
+		return nil, err
+	}
+	return hash[:], nil
+}
+
 
 func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, commit string) ([]byte, error) {
 	files, err := h.api.repo.GetFiles(r.Context(), ref.owner, ref.module, commit)
