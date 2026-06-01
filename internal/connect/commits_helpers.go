@@ -127,6 +127,35 @@ func parseGetGraphResourceRefs(msg []byte) []moduleRef {
 	return refs
 }
 
+// parseGetGraphResourceRefsV1 parses v1 GetGraphRequest where field 1 contains ResourceRef directly.
+// v1 GetGraphRequest: field 1 = repeated ResourceRef { Name { owner, module, ref } }
+// (no GetGraphRequest_ResourceRef wrapper)
+func parseGetGraphResourceRefsV1(msg []byte) []moduleRef {
+	var refs []moduleRef
+	for len(msg) > 0 {
+		num, typ, n := protowire.ConsumeTag(msg)
+		if n < 0 {
+			break
+		}
+		msg = msg[n:]
+		if num == 1 && typ == protowire.BytesType {
+			v, mLen := protowire.ConsumeBytes(msg)
+			msg = msg[mLen:]
+			// v is ResourceRef directly (not wrapped in GetGraphRequest_ResourceRef)
+			if ref := parseResourceRef(v); ref != nil {
+				refs = append(refs, *ref)
+			}
+		} else {
+			n = protowire.ConsumeFieldValue(num, typ, msg)
+			if n < 0 {
+				break
+			}
+			msg = msg[n:]
+		}
+	}
+	return refs
+}
+
 func extractField1(msg []byte) []byte {
 	for len(msg) > 0 {
 		num, typ, n := protowire.ConsumeTag(msg)

@@ -84,6 +84,28 @@ func buildGetGraphRequest(owner, module string) []byte {
 	return req
 }
 
+// buildV1GetGraphRequest builds a v1-format GetGraph request with ResourceRef directly.
+// v1 GetGraphRequest: field 1 = repeated ResourceRef { name = 2; Name { owner=1; module=2 } }
+// (no GetGraphRequest_ResourceRef wrapper)
+func buildV1GetGraphRequest(owner, module string) []byte {
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, owner)
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, module)
+
+	var resRef []byte
+	resRef = protowire.AppendTag(resRef, 2, protowire.BytesType)
+	resRef = append(resRef, protowire.AppendVarint(nil, uint64(len(name)))...)
+	resRef = append(resRef, name...)
+
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType)
+	req = append(req, protowire.AppendVarint(nil, uint64(len(resRef)))...)
+	req = append(req, resRef...)
+	return req
+}
+
 // buildDownloadRequest builds a protobuf-encoded Download request using a commit ID.
 func buildDownloadRequest(commitID string) []byte {
 	// ResourceRef: id=1
@@ -166,7 +188,7 @@ func TestV1RoutesNotReachingRootHandler(t *testing.T) {
 		body []byte
 	}{
 		{"CommitService v1", "/buf.registry.module.v1.CommitService/GetCommits", buildGetCommitsRequest("owner", "repo")},
-		{"GraphService v1", "/buf.registry.module.v1.GraphService/GetGraph", buildGetGraphRequest("owner", "repo")},
+		{"GraphService v1", "/buf.registry.module.v1.GraphService/GetGraph", buildV1GetGraphRequest("owner", "repo")},
 	}
 
 	for _, tc := range v1Paths {
@@ -261,13 +283,16 @@ func TestGraphServiceV1ReturnsProtobuf(t *testing.T) {
 	io.ReadAll(commitResp.Body)
 	commitResp.Body.Close()
 
-	for _, path := range []string{
-		"/buf.registry.module.v1.GraphService/GetGraph",
-		"/buf.registry.module.v1beta1.GraphService/GetGraph",
-	} {
-		t.Run(path, func(t *testing.T) {
-			body := buildGetGraphRequest("owner", "repo")
-			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+	testPaths := []struct {
+			path string
+			body []byte
+		}{
+			{"/buf.registry.module.v1.GraphService/GetGraph", buildV1GetGraphRequest("owner", "repo")},
+			{"/buf.registry.module.v1beta1.GraphService/GetGraph", buildGetGraphRequest("owner", "repo")},
+		}
+		for _, tc := range testPaths {
+			t.Run(tc.path, func(t *testing.T) {
+				resp, err := http.Post(server.URL+tc.path, "application/proto", bytes.NewReader(tc.body))
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
