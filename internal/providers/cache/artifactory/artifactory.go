@@ -32,6 +32,9 @@ func New(
 	timeout time.Duration,
 	bodyLimit int64,
 ) artifactory {
+	if log == nil {
+		log = slog.Default()
+	}
 	if bodyLimit <= 0 {
 		bodyLimit = defaultBodyLimit
 	}
