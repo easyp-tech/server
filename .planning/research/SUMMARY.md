@@ -1,151 +1,172 @@
 # Project Research Summary
 
-**Project:** easyp-buf-proxy
-**Domain:** Buf registry protocol proxy -- adding modern Buf CLI (v1.69.0+) support
-**Researched:** 2026-05-07
+**Project:** EasyP Buf Proxy — Diagnostic Logging Improvements
+**Domain:** Go-based Connect RPC proxy server with dual-protocol support (v1alpha1 Connect RPC + v1/v1beta1 raw protobuf)
+**Researched:** 2026-06-16
 **Confidence:** HIGH
 
 ## Executive Summary
 
-This project is a Buf Schema Registry (BSR) proxy that translates BSR protocol requests into VCS (GitHub, Bitbucket, local Git) operations, allowing `buf mod update` and `buf build` to work against Git repositories instead of the BSR. The core task is adding support for modern buf CLI (v1.69.0+) while maintaining backward compatibility with the currently-supported deprecated version (v1.30.1).
+This research evaluates what is needed to make 400/500 errors in the EasyP Buf Proxy diagnosable without source code access. The project is a stateless Go proxy that translates between buf CLI protocols and multiple VCS backends (GitHub, BitBucket, local git) with a caching layer. The core finding is that **zero new dependencies are required** — Go 1.26 stdlib `log/slog` and the existing connect-go v1.19.x interceptor API provide everything needed for production-grade diagnostic logging.
 
-The research reveals a critical simplification: both old and new buf CLI versions use **identical proto package paths** (`buf.alpha.registry.v1alpha1`), **identical service names**, and **identical HTTP procedure paths**. The modern proto is a strict superset of the old -- existing RPCs have unchanged request/response messages, and the only additions are new RPCs that a proxy does not need to implement (SDK version resolution, repository group management). This means the project does NOT need a dual-protocol architecture. A single Connect RPC handler generated from the v1.69.0 proto definitions will serve both old and new buf CLI clients correctly, using protobuf's built-in forward-compatibility.
+The recommended approach is a five-phase rollout built on three architectural patterns: (1) a Connect RPC unary interceptor for v1alpha1 handlers, (2) context-based correlation ID propagation linking middleware, handlers, and providers, and (3) structured error logging at the handler level using `slog.Logger` already injected via DI. The HTTP middleware should be demoted from error logging to INFO-only timing/status, with all diagnostic detail pushed to handler-level logs where structured fields (owner, repo, commit) are available.
 
-The primary risks are not protocol incompatibility but rather build chain issues (code generation pointing at the wrong proto submodule, connect-go version mismatches), test infrastructure complexity (TLS certificate trust, buf binary versioning, GitHub API rate limits), and one empirical unknown: whether modern buf CLI requires any of the new RPCs during `buf mod update` and fails on `CodeUnimplemented` responses.
+The key risks are: (1) inadvertently leaking sensitive data (GitHub tokens, BitBucket passwords) through error chains when adding handler-level logging, (2) double-logging errors at both middleware and handler levels creating log noise and alert fatigue, and (3) log volume explosion from debug-level per-file operations without proper level separation (TRACE vs DEBUG). These are all preventable with upfront redaction design, a clear logging-boundary decision, and structured log-level planning.
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack change is minimal. No new dependencies are required. The core update is upgrading `connectrpc.com/connect` from v1.11.1 to v1.18.1 (the latest version supporting Go 1.22 -- v1.19.x requires Go 1.24). Everything else stays as-is.
+**Verdict: Zero new dependencies.** All diagnostic logging features are implementable with Go 1.26 stdlib `log/slog` and the existing connect-go v1.19.x interceptor API. The missing piece is not a library — it is a Connect RPC unary interceptor and contextual logger propagation via `slog.Logger.With()`.
 
 **Core technologies:**
-- **Go 1.22:** Runtime -- staying on current version; Go 1.24 upgrade is a separate milestone
-- **connectrpc.com/connect v1.18.1:** RPC framework -- upgrade from v1.11.1 for compatibility with newly generated Connect stubs; v1.18.1 is the latest supporting Go 1.21+
-- **Buf CLI:** Code generation -- generate from v1.69.0 proto submodule instead of the old v1.30.1 submodule; buf.gen.yaml stays on v1 format
-- **google.golang.org/protobuf:** Protobuf runtime -- minor security update acceptable but not blocking
-- **Existing VCS providers (go-github, go-git):** Unchanged -- no protocol changes affect the provider layer
+- `log/slog` (Go 1.26 stdlib): Structured logging with level gates, `ReplaceAttr` for redaction, `With()` for contextual loggers, `LogAttrs` for zero-alloc hot paths, `slog.LevelVar` for dynamic level control — all built in, no third-party library needed
+- `connectrpc.com/connect v1.19.2` (existing): `Interceptor` interface with `WrapUnary` for request/response logging of all v1alpha1 handlers without modifying handler code
+- `crypto/rand` (Go stdlib): Correlation ID generation when `X-Request-Id` header is absent — 8-byte hex string sufficient for single-server tracing
+
+**Explicitly not recommended:** `rs/zerolog`, `uber-go/zap`, `sirupsen/logrus`, OpenTelemetry SDK, `connectrpc.com/otelconnect-go` — all are either redundant with slog's capabilities or overkill for a single-process proxy.
 
 ### Expected Features
 
-**Must have (table stakes -- already implemented, must continue working):**
-- `GetRepositoryByFullName` / `GetRepositoriesByFullName` -- module discovery by owner/repo name
-- `GetModulePins` -- dependency resolution via `buf mod update`
-- `DownloadManifestAndBlobs` -- module content download
+The MVP (v1.3) focuses on making failures diagnosable. All P1 features require zero new dependencies.
 
-**Should verify (new RPCs to handle via Unimplemented):**
-- `GetSDKInfo` -- new unified SDK version resolution; HIGH risk if buf CLI requires it during core workflows
-- `GetCargoVersion` / `GetNugetVersion` / `GetCmakeVersion` -- niche SDK version RPCs; LOW risk
+**Must have (table stakes):**
+- **Correlation ID propagation** — Generate or pass-through `X-Request-Id`, attach to `context.Context` in logging middleware, extract in all handlers and providers. Without this, logs from concurrent requests are indistinguishable.
+- **Connect RPC interceptor logging** — Single unary interceptor covering all 3 v1alpha1 handlers (blobs, modulepins, bynames) with structured procedure, peer, duration, request_size, response_size, error code. Zero changes to handler code.
+- **v1beta1 raw handler instrumentation** — Per-handler logging in commits.go ServeHTTP/ServeGraph/ServeDownload/ServeGetModules with full structured context (owner, module, commit).
+- **Error-path structured logging** — Every `http.Error()` and `fmt.Errorf()` in handler code gets a matching `log.ErrorContext()` or `log.WarnContext()` with owner, repo, commit, error, request_id.
+- **Provider call tracing (debug)** — Before/after logging for GitHub, BitBucket, Artifactory external API calls with timing and response status.
+- **Sensitive data masking** — Extend existing header masking to new log paths. Add `slog.HandlerOptions.ReplaceAttr` for key-name-based redaction as defense-in-depth.
 
-**Defer (not proxy concerns):**
-- Repository group management (`AddRepositoryGroup`, etc.) -- write operations, proxy is read-only
-- Full SDK version implementation -- requires BSR plugin registry knowledge the proxy does not have
-- Go 1.24 upgrade and connect-go v1.19.x -- separate milestone
+**Should have (v1.4):**
+- **Runtime log level via signal handler** — `SIGUSR1` toggling between INFO and DEBUG using `slog.LevelVar`. Enables live debugging without restart.
+- **Panic recovery middleware** — `recover()` wrapper around entire ServeMux logging stack trace and returning 500.
+- **Request/response body hex dump** — At debug level only, truncated to 4KB, with opt-in flag/header.
+
+**Defer (v2+):**
+- Log sampling / rate limiting — Not needed until production load requires it.
+- OpenTelemetry integration — Overkill for <10 spans per request; structured attributes achieve 90% of the value.
+- Admin HTTP endpoint for log level — Signal handler is simpler and sufficient.
+- Structured error codes — Add after operational experience reveals which error paths need dashboarding.
 
 ### Architecture Approach
 
-The recommended architecture is a **single superset handler**. Generate Go code from the v1.69.0 proto definitions, replacing the old generated code entirely. The generated Connect RPC handlers implement the modern interfaces, with `Unimplemented*Handler` embeddings absorbing new RPCs the proxy does not serve. Old buf clients call the same HTTP paths with the same messages and work without any changes. The provider layer (`internal/providers/`) is completely untouched.
+The existing structure is sound. Diagnostic logging requires one new file, modifications to six existing files, and no new packages.
 
-**Major components (in dependency order):**
-1. **`api/proto/generate.go`** -- Proto source switch: copy from `buf-v1.69.0` instead of old `buf`
-2. **`gen/proto/`** -- Regenerated Go code from v1.69.0 protos (replaces old generated code)
-3. **`internal/connect/`** -- RPC handlers: update to embed new `Unimplemented*Handler` types; core handler logic likely unchanged
-4. **Provider layer** (`internal/providers/`) -- Completely unchanged; the API layer talks to it via the same `provider` interface
+**Major components:**
+1. **Connect RPC unary interceptor** (`internal/connect/interceptor.go`, NEW) — Wraps all v1alpha1 handlers to log procedure, peer, duration, request/response size, and error code. Generates or extracts correlation ID from request headers. One interceptor covers blobs, modulepins, bynames with zero handler changes.
+2. **Correlation ID middleware** (`cmd/easyp/main.go`, MODIFY) — Extends existing `loggingMiddleware` to generate or pass-through `X-Request-Id`, attach to context via `context.WithValue` and `slog.WithContext`. Enables every downstream log line to carry a request ID without explicit parameter passing.
+3. **Structured error logging at handler level** (`internal/connect/blobs.go`, `modulepins.go`, `bynames.go`, `commits.go`, MODIFY) — Every error path logs structured attributes (owner, repo, commit, error, request_id) before writing HTTP error response. The HTTP middleware is demoted to INFO-level timing/status only.
+
+**Key architectural decision:** Log at the handler level for errors, not the middleware level. Handlers have access to structured fields (owner, repo, commit) that the HTTP middleware cannot see. This avoids the anti-pattern of "status=500" with no context.
 
 ### Critical Pitfalls
 
-1. **Generating from old protos silently** -- `generate.go` has the old submodule path hardcoded. If not updated first, regeneration silently reverts to old definitions. Prevention: update `generate.go` to point at `buf-v1.69.0` before any regeneration.
+1. **Logging sensitive data through error chains** — Error messages wrapped through multiple layers (`fmt.Errorf("...: %w", err)`) can contain full HTTP URLs with credentials, API tokens, or internal paths. Prevention: audit every error path before adding logging, implement URL redaction at the provider layer, never log `err.Error()` as a raw string without checks. Structured attributes (owner, repo, commit) are safe; error strings are not.
 
-2. **Over-engineering dual-protocol handlers** -- Creating separate handler packages for old and new protocols is unnecessary and impossible (same Go package paths, same HTTP paths). Prevention: use a single handler generated from v1.69.0 protos.
+2. **Double logging of errors (middleware vs. handler)** — Both the HTTP middleware (current, on 4xx/5xx) and new handler-level logging will fire for the same error, producing duplicate ERROR-level log lines. Prevention: demote middleware logging to INFO-level timing/status only. Push all diagnostic detail to handler-level logs. This is a deliberate architectural decision that must be made before writing any code.
 
-3. **connect-go version mismatch** -- Newly generated stubs may reference APIs not in v1.11.1. Prevention: upgrade connect-go to v1.18.1 before regeneration.
+3. **Protobuf binary body logging without truncation** — Bodies up to 50MB logged as raw protobuf bytes at debug level fill disks in minutes, break JSON log parsing (binary encoded as base64), and are unreadable. Prevention: never log raw protobuf bytes — log structured fields extracted during parsing instead. If body hex dump is absolutely needed, truncate to 1024 bytes, encode as hex, and gate behind both DEBUG level AND an explicit opt-in header.
 
-4. **Wrong buf binary in tests** -- Tests using `$PATH` buf instead of pinned binaries produce misleading results. Prevention: download both versions to explicit test paths, assert version before each test.
+4. **Missing request ID propagation** — Correlation ID captured in logging middleware but never stored in `context.Context`. When concurrent requests interleave (common in buf CLI), log entries are indistinguishable. Prevention: attach request ID to `r.Context()` in the middleware, use `slog.WithContext` so `slog.FromContext(ctx)` automatically picks it up in downstream code.
 
-5. **TLS certificate trust in tests** -- Self-signed certs may not be trusted by buf CLI's Go TLS stack. Prevention: generate test certs programmatically or use `SSL_CERT_FILE`.
+5. **Log volume explosion from debug-level tracing** — A single `buf mod update` can generate 2000+ debug log lines (per-file download, hash operations). Prevention: use TRACE level (below DEBUG) for per-file operations, DEBUG for per-RPC metadata, INFO for operational messages. Document expected log volume at each level so operators know what to expect before enabling debug in production.
 
 ## Implications for Roadmap
 
 Based on research, suggested phase structure:
 
-### Phase 1: Code Generation and Build Verification
-**Rationale:** Everything depends on generated code. This is the foundation -- switch proto source, regenerate, verify the build compiles. No behavioral changes yet.
-**Delivers:** Project compiles against v1.69.0 proto definitions; new Unimplemented RPC stubs in generated code; old generated files for removed protos cleaned up.
-**Addresses:** Stack updates (connect-go v1.18.1, proto regeneration)
-**Avoids:** Pitfall 1 (dual handlers), Pitfall 2 (wrong proto source), Pitfall 7 (version mismatch)
+### Phase 1: Logging Foundation
+**Rationale:** Must come first because all other phases depend on logger configuration, redaction, and env-var override being in place. This phase has no external dependencies.
+**Delivers:** Enriched LogConfig (Format, AddSource), `EASYP_LOG_LEVEL` env var override, `slog.HandlerOptions.ReplaceAttr` for centralized redaction, `slog.LevelVar` for future dynamic control.
+**Addresses:** Sensitive data masking (table stake, P1 from FEATURES.md)
+**Avoids:** Pitfall 1 (sensitive data through error chains — redaction layer must exist before any new log calls), Pitfall 6 (credentials in startup validation — redaction catches startup log leaks)
+**Stack elements:** Go 1.26 `log/slog`, `slog.HandlerOptions.ReplaceAttr`, `slog.LevelVar`
+**Files modified:** `cmd/easyp/main.go` (newLogger), `cmd/easyp/internal/config/config.go` (LogConfig)
 
-### Phase 2: Handler Adaptation
-**Rationale:** With new generated code in place, update handler structs to embed the new `Unimplemented*Handler` types. Existing handler methods (GetModulePins, GetRepositoryByFullName, DownloadManifestAndBlobs) should compile unchanged since their request/response types are identical.
-**Delivers:** Server binary that compiles and starts with new proto definitions; all existing RPCs work; new RPCs return `CodeUnimplemented`.
-**Uses:** connect-go v1.18.1, regenerated proto code
-**Implements:** `internal/connect/api.go` struct updates; potential `manifest_digest` field population in modulepins.go
-**Avoids:** Pitfall 4 (implementing unneeded RPCs), Pitfall 15 (missing M mappings)
+### Phase 2: Logging Infrastructure
+**Rationale:** Correlation ID propagation and the Connect interceptor are the infrastructure that all subsequent handler and provider logging will use. Both must be in place before error-path logging is added to handlers, otherwise logs from concurrent requests will be indistinguishable.
+**Delivers:** Correlation ID generation/passthrough in all requests, Connect RPC unary interceptor logging procedure/peer/duration/error for v1alpha1 handlers, context-based request ID propagation via `slog.WithContext`.
+**Addresses:** Correlation ID propagation (table stake, P1), Connect RPC interceptor logging (P1)
+**Avoids:** Pitfall 2 (double logging — by demoting middleware error logging to INFO), Pitfall 5 (missing request ID propagation — design it before writing handler logs), Pitfall 11 (dynamic log level — use `slog.LevelVar` from the start)
+**Research flag:** Phase 3-4 depend on this infrastructure being correct.
+**Files modified:** `cmd/easyp/main.go` (loggingMiddleware), `internal/connect/interceptor.go` (NEW), `internal/connect/api.go` (pass opts)
 
-### Phase 3: Test Infrastructure
-**Rationale:** Before running integration tests, build proper test infrastructure: pinned buf binaries, programmatic TLS certs, port-auto-assignment, test helpers. This is foundational for all subsequent validation.
-**Delivers:** Reusable test infrastructure for both old and new buf CLI versions.
-**Avoids:** Pitfall 3 (wrong binary), Pitfall 4 (TLS trust), Pitfall 9 (port conflicts), Pitfall 11 (race on server startup)
+### Phase 3: Error Path Logging (Handlers)
+**Rationale:** After infrastructure is in place, add structured error logging to all handler error paths. This is the highest-value phase for diagnosability — every 400/500 error will have full structured context in logs. The v1alpha1 and v1beta1 paths must be handled separately with consistent attribute schemas.
+**Delivers:** Every `http.Error()` and `return nil, fmt.Errorf(...)` in handler code produces a structured log with owner, repo, commit, error, request_id, protocol. Consistent attribute schema across v1alpha1 (interceptor) and v1beta1/v1 (manual logging) paths.
+**Addresses:** Error-path structured logging (P1), v1beta1 raw handler instrumentation (P1)
+**Avoids:** Pitfall 4 (error context not captured at source — providers also get logging in Phase 4), Pitfall 9 (logging after context cancellation — add `ctx.Err()` check before ERROR-level logs), Pitfall 10 (inconsistent attributes — establish naming convention before writing log calls), Pitfall 13 (protocol mismatch — use `slog.String("protocol", "v1alpha1"/"v1beta1")` on all error logs)
+**Files modified:** `internal/connect/blobs.go`, `modulepins.go`, `bynames.go`, `commits.go`
+**Research flag:** None — standard error-logging patterns, well-documented.
 
-### Phase 4: Validation with Old Protocol (buf v1.30.1)
-**Rationale:** Verify backward compatibility. The proto diff says nothing changed for existing RPCs, but this must be empirically confirmed. Run `buf mod update` with old CLI against the server built with new protos.
-**Delivers:** Confirmed backward compatibility with buf v1.30.1.
-**Avoids:** Pitfall 14 (is_bsr_head field removal)
+### Phase 4: Provider Logging Enhancement
+**Rationale:** Provider logging (GitHub API calls, BitBucket API calls, Artifactory cache, local git) gives the diagnostic depth needed when errors originate outside the proxy. This phase depends on Phase 2 (correlation ID propagation) so provider log lines carry request context.
+**Delivers:** Before/after debug logging for all external API calls with redacted URL, method, response status, duration. Cache hit/miss logging with duration. Context cancellation distinction in error logs. Provider type attribute on every log line.
+**Addresses:** Provider call tracing at debug level (P1)
+**Avoids:** Pitfall 1 (sensitive data — redact URLs at provider layer before they enter error chains), Pitfall 4 (error context at source — log at provider boundary, not just handler), Pitfall 9 (context cancellation — distinguish client disconnect from API error)
+**Research flag:** BitBucket and localgit providers may need deeper developer attention during implementation, as they have zero logging currently and their provider interfaces differ. Skippable if Phase 1 redaction and Phase 2 infrastructure are solid.
+**Files modified:** `internal/providers/github/getrepo.go`, `internal/providers/github/getfiles.go`, `internal/providers/bitbucket/*.go`, `internal/providers/localgit/*.go`, `internal/providers/multisource/repo.go`, `internal/providers/cache/artifactory/artifactory.go`
 
-### Phase 5: Validation with New Protocol (buf v1.69.0+)
-**Rationale:** This is the goal. Test modern buf CLI against the proxy. The critical unknown is whether `buf mod update` calls `GetSDKInfo` or other new RPCs and fails on `Unimplemented`. This phase will discover that empirically.
-**Delivers:** Confirmed support for modern buf CLI; discovery of any required new RPC implementations.
-**Flags:** May require a follow-up phase to implement `GetSDKInfo` or other RPCs if testing shows they are required for core workflows.
-**Avoids:** Pitfall 10 (unimplemented RPCs breaking CLI), Pitfall 5 (GitHub API rate limits), Pitfall 6 (wrong buf.yaml registry)
+### Phase 5: Advanced Diagnostics (v1.4)
+**Rationale:** Panic recovery, dynamic log level, and body hex dump are valuable but not required for MVP. They depend on the logging infrastructure (Phase 2) being in place. Panic recovery is high-value for production stability and should be prioritized higher within this phase.
+**Delivers:** Panic recovery middleware logging full stack trace and returning 500, `SIGUSR1` signal handler toggling log level between INFO and DEBUG, request/response body hex dump at debug level with truncation and opt-in header.
+**Addresses:** Runtime log level (P2), Panic recovery (P2), Body hex dump (P3)
+**Avoids:** Pitfall 3 (body logging without truncation — enforce truncation from day one if body logging is implemented), Pitfall 7 (panic in logging code — add `recover()` in middleware), Pitfall 12 (flaky test assertions — design test logging infrastructure before writing tests)
+**Research flag:** Body hex dump needs careful design for protobuf binary encoding. Can skip `--research-phase` if using simple hex encoding of first 1024 bytes. Dynamic log level via signal handler is a well-documented pattern (`slog.LevelVar` + `os.Signal.Notify`).
 
 ### Phase Ordering Rationale
 
-- **Code generation first** because all handler code depends on generated types. Changing the proto source is a prerequisite for everything else.
-- **Handler adaptation before testing** because you need a compiling binary before you can test anything.
-- **Test infrastructure before validation** because the project currently has no integration tests with real buf binaries. Building this once avoids manual testing errors.
-- **Old protocol before new** because old protocol validation is a smoke test that the regeneration did not break anything. If it fails, stop and fix before testing new protocol.
-- **New protocol last** because this is the target state, and it may discover additional work (implementing `GetSDKInfo`).
+- **Phase 1 before Phase 2:** Redaction and env-var override must be in place before any new log lines are written, otherwise sensitive data could leak from the very first new log call.
+- **Phase 2 before Phase 3:** Correlation ID propagation is required for any multi-step request diagnostic. Without it, handler-level logs from concurrent requests are indistinguishable.
+- **Phase 3 and Phase 4 are parallelizable:** Error-path logging at the handler level and provider logging enhancement can be done simultaneously by different developers, as they modify different files. However, both depend on Phase 2 infrastructure.
+- **Phase 5 last:** Dynamic log level is nice-to-have but not required for MVP. Panic recovery is higher value and should be prioritized if the team has capacity in v1.3.
+- **Phase 3 is the highest-ROI phase:** It addresses the core diagnosability gap — 400/500 errors will have full structured context in logs. This alone justifies the milestone.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 5 (New Protocol Validation):** Needs empirical testing to discover which new RPCs buf v1.69.0 actually calls during `buf mod update` and `buf build`. No amount of document research can answer this -- it requires running the CLI against a server and observing behavior.
-- **Phase 2 (Handler Adaptation):** The `manifest_digest` field risk is MEDIUM confidence. Research could not determine whether modern buf CLI requires this field to be populated. May need implementation if validation shows it is required.
+- **Phase 4 (Provider Logging):** BitBucket and localgit providers have zero logging currently and their provider interfaces differ from GitHub. The developer implementing this phase will need to understand each provider's internal structure. This is low-risk but may need `--research-phase` if the team is unfamiliar with these providers.
+- **Phase 5 (Body Hex Dump):** Protobuf binary encoding into logs requires careful design for readability and performance. Simple hex encoding of first 1024 bytes is well-understood, but if the team wants structured protobuf deserialization for debug logs, that needs more research.
 
-Phases with standard patterns (skip additional research):
-- **Phase 1 (Code Generation):** Well-documented buf generate workflow, direct proto file diff available.
-- **Phase 3 (Test Infrastructure):** Standard Go testing patterns (httptest, exec.Command, t.Cleanup).
-- **Phase 4 (Old Protocol Validation):** Should pass trivially since proto messages are identical for implemented RPCs.
+Phases with standard patterns (skip research-phase):
+- **Phase 1 (Logging Foundation):** Well-documented Go patterns (`slog.HandlerOptions`, `ReplaceAttr`, `slog.LevelVar`). No research needed.
+- **Phase 2 (Logging Infrastructure):** Connect interceptor pattern is documented in connect-go v1.19.x via Context7 docs. Correlation ID via context is a Go standard pattern.
+- **Phase 3 (Error Path Logging):** Mechanical changes to existing handler code. Patterns are established in `multisource/repo.go` which already demonstrates the correct approach.
+- **Phase 5 (Panic Recovery, Dynamic Log Level):** Both are well-documented Go patterns. `recover()` middleware is a web server standard. `slog.LevelVar` + `os.Signal.Notify` is documented in Go stdlib.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Version constraints verified from GitHub releases. Proto diff directly inspected. Go module compatibility verified. |
-| Features | HIGH | Direct proto file comparison with line-level diff. No external sources needed -- all facts from codebase analysis. |
-| Architecture | HIGH | Proto package identity confirmed. Connect RPC path identity confirmed. Provider interface segregation documented in existing code. |
-| Pitfalls | HIGH | Most pitfalls derived from direct codebase analysis. Connect RPC documentation from Context7 confirmed handler patterns. One empirical unknown (GetSDKInfo requirement). |
+| Stack | HIGH | All recommendations verified against Go 1.26 stdlib docs, connect-go v1.19.x Context7 docs, and existing codebase patterns. Zero new dependencies required. |
+| Features | HIGH | Derived from direct codebase analysis and buf CLI reference implementation. Feature dependencies and MVP boundary are clear. |
+| Architecture | HIGH | Verified against all source files in the codebase. The three architectural patterns (interceptor, correlation ID, handler-level error logging) are well-documented and appropriate for the dual-protocol architecture. |
+| Pitfalls | HIGH | Based on direct codebase analysis (all provider error chains audited), official Go/slog documentation, and established structured logging patterns. Recovery strategies and prevention approaches are concrete. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **GetSDKInfo requirement:** Cannot determine from documentation alone whether buf v1.69.0 calls `GetSDKInfo` during `buf mod update`. Must be tested empirically in Phase 5. If required, will need a stub implementation.
-- **manifest_digest field:** The modern `ModulePin` message includes a `manifest_digest` field. Unknown whether modern buf CLI requires it. May need implementation in Phase 2 based on Phase 5 validation results.
-- **Connect-go v1.18.1 generated code compatibility:** HIGH confidence that generated stubs work with v1.18.1, but should verify immediately after regeneration with `go build ./...`. The version check constant in generated code may reference a newer version marker.
+- **Provider-specific error chain audit:** While Pitfall 1 identifies the general risk of sensitive data in error chains, a full audit of every provider's error wrapping (BitBucket `client.go` URL inclusion, Artifactory cache URL exposure) will be needed during Phase 4 implementation. This is developer diligence, not a research gap.
+- **Log attribute naming convention:** Pitfall 10 identifies the risk of inconsistent attribute names. The standard names (`request_id`, `owner`, `repo`, `commit`, `procedure`, `protocol`, `provider_type`, `cache_hit`, `duration_ms`) should be documented as project-wide constants before Phase 3 implementation. This is a design decision, not a research gap.
+- **Body logging format for protobuf:** If body logging is implemented in Phase 5, the exact format (hex vs base64 vs structured field dump) needs a design decision. Simple hex encoding of first 1024 bytes is recommended to avoid protobuf decoding complexity.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct proto file comparison: `api/_third_party/buf/` vs `api/_third_party/buf-v1.69.0/` -- all findings about protocol compatibility
-- Existing codebase analysis: `internal/connect/`, `gen/proto/`, `api/proto/` -- architecture and handler patterns
-- connect-go Context7 docs: `/connectrpc/connect-go` -- handler registration, Unimplemented pattern, version compatibility
-- buf CLI Context7 docs: `/bufbuild/buf` -- code generation, buf.gen.yaml configuration
-- connect-go GitHub releases: version constraints and changelog entries verified
+- **Go 1.26 stdlib `log/slog`** — Official Go documentation for `Enabled()`, `LogAttrs()`, `HandlerOptions.ReplaceAttr`, `Logger.With()`, `slog.FuncAttr`, `slog.LevelVar`, `slog.WithContext`, `slog.FromContext`
+- **connect-go v1.19.x** — Official library API for `Interceptor` interface, `WrapUnary`, `connect.WithInterceptors`, `connect.UnaryInterceptorFunc`
+- **Existing codebase** — Direct analysis of all Go source files in `cmd/`, `internal/connect/`, `internal/providers/`, `internal/https/`
+- **buf CLI reference** — buf's own `NewDebugLoggingInterceptor` pattern in `buf/private/bufpkg/bufconnect/interceptors.go`
 
 ### Secondary (MEDIUM confidence)
-- BSR on-prem TLS guidance: buf.build/docs -- test infrastructure recommendations
-- Buf CLI stability policy: github.com/bufbuild/buf README -- "no breaking changes within v1.x"
+- **Connect RPC documentation (connectrpc.com/docs)** — Interceptor patterns and handler options (cross-referenced against Context7 library docs)
+- **Dave Cheney, "Let's Talk About Logging"** — Structured logging best practices (widely cited in Go community)
+- **Go issue #59369** — `slog` performance characteristics and allocation patterns
+- **OWASP Log Injection Cheat Sheet** — Log injection attack patterns
+- **Protobuf wire format documentation (protobuf.dev)** — Binary encoding format
 
 ---
-*Research completed: 2026-05-07*
+*Research completed: 2026-06-16*
 *Ready for roadmap: yes*

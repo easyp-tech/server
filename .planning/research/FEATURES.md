@@ -1,239 +1,355 @@
-# Feature Landscape
+# Feature Research: Diagnostic Logging for Connect RPC Proxy
 
-**Domain:** Buf registry protocol proxy -- modern protocol addition
-**Researched:** 2026-05-07
-**Confidence:** HIGH (direct proto file comparison, no external sources needed)
+**Domain:** Diagnostic logging for a Go-based Buf registry proxy server
+**Researched:** 2026-06-16
+**Confidence:** HIGH
 
-## Protocol Diff Summary
+## Current State Assessment
 
-The proto package path remains `buf.alpha.registry.v1alpha1` in both old (v1.30.1-compatible) and new (v1.69.0) versions. This is significant: Buf has NOT introduced a `v1` or `v1beta1` package. Both old and new buf CLI clients speak the same protobuf package and service names. The changes are additive within the same package -- new RPCs and messages added to existing services, some RPCs/messages removed from the old that are not in the new.
+The codebase already has:
+- A single `loggingMiddleware` in `main.go` that wraps the entire `http.ServeMux` and logs request method, path, duration, status code, and client IP
+- Sensitive header masking (Authorization, Cookie, X-Api-Key, Token) for debug-level request header logging
+- `slog` with JSON handler, level configurable via config file `log.level` field
+- Scattered `log.Debug` calls in `multisource/repo.go` (cache hit/miss, repo lookup)
+- Startup health checks logged (cache access, repository connections)
 
-### Critical Finding: Same Service Names, Same gRPC Procedure Paths
+**Critical gaps** that this milestone must address:
+- No correlation ID propagation from HTTP middleware into handler-level logs
+- Connect RPC handlers (`modulepins.go`, `blobs.go`, `bynames.go`) have ZERO logging
+- v1beta1 raw protobuf handlers (`commits.go`) have ZERO logging
+- Error paths write HTTP error messages but never log server-side diagnostics
+- No request/response body logging at debug level
+- Log level is static (set at startup, no runtime adjustment)
+- No panic recovery middleware
+- No per-endpoint metrics or tracing
 
-Both old and new protos define the same three services the proxy implements:
-- `buf.alpha.registry.v1alpha1.RepositoryService`
-- `buf.alpha.registry.v1alpha1.ResolveService`
-- `buf.alpha.registry.v1alpha1.DownloadService`
+## Feature Landscape
 
-This means the HTTP procedure paths are identical between versions (e.g., `/buf.alpha.registry.v1alpha1.DownloadService/DownloadManifestAndBlobs`). The new buf CLI will call the same endpoints. The server does NOT need separate route registrations for old vs new -- it needs to handle the expanded set of RPCs that the new client may call.
+### Table Stakes (Users Expect These)
 
-### Files Removed in v1.69.0 (present in old, absent in new)
+Features that any production-grade diagnostic logging system must have. Missing these means the system cannot be diagnosed without source code access.
 
-| Proto File | Had Services | Impact on Proxy |
-|------------|-------------|-----------------|
-| `labels.proto` | Yes: `LabelService` | LOW -- Proxy never implemented this |
-| `recommendation.proto` | No (messages only) | LOW -- Proxy never used these types |
-| `sync.proto` | Yes: `SyncService` | LOW -- Proxy never implemented this |
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **Correlation ID propagation** | Must trace a single request across middleware, handlers, and providers. Without this, logs from different components cannot be linked to the same request. | LOW | Add `requestID` to `context.Context` in middleware; extract it in handlers/providers. Requires adding a context helper package or key type. |
+| **Error-path structured logging** | When a handler returns 400/500, the server-side log must contain the full diagnostic context (owner, repo, commit, error details) -- not just "request completed 500". | LOW | Every `http.Error()` call and every `return nil, fmt.Errorf(...)` in connect handlers needs a matching `log.ErrorContext()` or `log.WarnContext()` call. |
+| **Request-level duration tracking** | Must know how long each handler took, broken down by component (VCS API call, digest computation, cache lookup). | MEDIUM | Current middleware tracks total duration only. Need per-handler timing or finer-grained spans. |
+| **Sensitive data preservation in enhanced logging** | Existing header masking must not be bypassed by new debug-level body logging. Must be maintained or extended. | LOW | Already implemented for headers. Body masking is more nuanced (protobuf binary is opaque; no masking needed for binary, but text fields in errors need care). |
+| **Runtime-configurable log level** | Must be able to increase log level to debug for a specific request or period without restarting the server. | MEDIUM | Options: signal handler (SIGUSR1), HTTP admin endpoint, or environment variable override. Signal handler is simplest for proxy environment. |
 
-These removals are BSR-specific features (BSR labels, recommendations, git sync). A proxy that serves VCS-backed modules never implemented them and does not need to.
+### Differentiators (Competitive Advantage)
 
-### Files Changed Between Old and New
+Features that go beyond basic diagnostics and make the system significantly more operable.
 
-Only the changes relevant to the three services the proxy implements are listed below. Full diff details are in the analysis sections that follow.
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **Connect RPC interceptor for structured handler logging** | All connect-go handlers get automatic logging of procedure, peer, request size, response size, duration, and error code -- without modifying each handler. | LOW | Mirror buf's own `NewDebugLoggingInterceptor`. Can be applied to existing 3 connect handlers (Resolve, Repository, Download services). |
+| **v1beta1 raw handler instrumentation** | The manual protobuf handlers (CommitService, GraphService, DownloadService, ModuleService) get the same diagnostic coverage as the connect handlers. | MEDIUM | These are `http.HandlerFunc` -- need per-handler wrappers or a second middleware layer within the mux. |
+| **Request/response body hex dump at debug level** | For debugging protobuf encoding issues, being able to see the raw payload bytes (truncated) is invaluable. | LOW | At LevelDebug, log first N bytes of request body and response body as hex. Must be opt-in and clearly flagged as diagnostic. |
+| **Panic recovery with full stack trace** | A panic in a handler should produce a structured log with stack trace and return 500, not crash the server. | LOW | `recover()` middleware wrapping all handlers. Use `debug.Stack()` for trace. |
+| **Provider call tracing** | Each external API call (GitHub, BitBucket, Artifactory) should be logged with timing, URL, and response status at debug level. | MEDIUM | Currently provider logging is sparse. Add slog.Debug before/after external HTTP calls in `github/getrepo.go`, `github/getfiles.go`, `bitbucket/getrepo.go`, `artifactory/artifactory.go`. |
+| **Log sampling / rate limiting** | At high-traffic production, debug logging every request could be overwhelming. A sampling mechanism limits noise. | MEDIUM | Could start simple: only enable debug for requests with a specific header (e.g., `X-Debug-Log: true`). More complex: hash-based sampling ratio. |
 
-## Table Stakes (Must Implement)
+### Anti-Features (Commonly Requested, Often Problematic)
 
-These are the RPCs the existing proxy ALREADY implements. They MUST continue to work for both old and new buf CLI clients. No changes needed -- the request/response message structures for these RPCs are identical between old and new protos.
+Features that seem useful but create problems if implemented.
 
-### RepositoryService -- Currently Implemented RPCs
-
-| Feature (RPC) | Why Expected | Complexity | Notes |
-|---------------|-------------|------------|-------|
-| `GetRepositoryByFullName` | Core discovery: buf CLI discovers modules by owner/repo name | LOW (existing) | No message changes between old/new |
-| `GetRepositoriesByFullName` | Batch version of above, used by `buf mod update` | LOW (existing) | No message changes between old/new |
-
-### ResolveService -- Currently Implemented RPCs
-
-| Feature (RPC) | Why Expected | Complexity | Notes |
-|---------------|-------------|------------|-------|
-| `GetModulePins` | Core dependency resolution: `buf mod update` resolves module references to pinned commits | LOW (existing) | Request/response messages unchanged |
-
-### DownloadService -- Currently Implemented RPCs
-
-| Feature (RPC) | Why Expected | Complexity | Notes |
-|---------------|-------------|------------|-------|
-| `DownloadManifestAndBlobs` | Core module download: `buf mod update` fetches module content | LOW (existing) | Request/response messages unchanged |
-
-### Currently Implemented RPCs That Remain Unimplemented (No Change Needed)
-
-These RPCs are defined in the old proto, remain in the new proto, and the proxy returns `CodeUnimplemented` for all of them. The new buf CLI will handle `CodeUnimplemented` gracefully for these.
-
-| Feature (RPC) | Why Safe to Leave Unimplemented | Complexity |
-|---------------|-------------------------------|------------|
-| `GetRepository` | Uses ID-based lookup; proxy only supports name-based | N/A |
-| `ListRepositories` | BSR listing; proxy has no use case | N/A |
-| `ListUserRepositories` | BSR user-scoped listing | N/A |
-| `ListRepositoriesUserCanAccess` | BSR auth-scoped listing | N/A |
-| `ListOrganizationRepositories` | BSR org-scoped listing | N/A |
-| `CreateRepositoryByFullName` | Write operation; proxy is read-only | N/A |
-| `DeleteRepository` | Write operation; proxy is read-only | N/A |
-| `DeleteRepositoryByFullName` | Write operation; proxy is read-only | N/A |
-| `DeprecateRepositoryByName` | Write operation; proxy is read-only | N/A |
-| `UndeprecateRepositoryByName` | Write operation; proxy is read-only | N/A |
-| `SetRepositoryContributor` | Write operation; proxy is read-only | N/A |
-| `ListRepositoryContributors` | BSR contributor management | N/A |
-| `GetRepositorySettings` | BSR settings management | N/A |
-| `UpdateRepositorySettingsByName` | Write operation; proxy is read-only | N/A |
-| `GetRepositoriesMetadata` | BSR metadata; proxy returns minimal data | N/A |
-| `GetRepositoryDependencyDOTString` | BSR dependency graph; proxy has no deps graph | N/A |
-| `Download` (legacy) | Deprecated in old proto too; `DownloadManifestAndBlobs` is the modern path | N/A |
-| `GetGoVersion` | SDK version resolution; proxy is not a BSR | N/A |
-| `GetSwiftVersion` | SDK version resolution; proxy is not a BSR | N/A |
-| `GetMavenVersion` | SDK version resolution; proxy is not a BSR | N/A |
-| `GetNPMVersion` | SDK version resolution; proxy is not a BSR | N/A |
-| `GetPythonVersion` | SDK version resolution; proxy is not a BSR | N/A |
-
-## Differentiators (New RPCs in v1.69.0 -- Must Handle)
-
-These RPCs are NEW in the v1.69.0 proto. The new buf CLI MAY call them. The proxy does NOT need to implement them functionally, but MUST return proper `CodeUnimplemented` responses (which the generated `Unimplemented*` handlers already do). The key risk is: if the new buf CLI requires any of these RPCs to complete its core workflow (`buf mod update`, `buf build`), the proxy must implement them or the CLI will fail.
-
-| Feature (RPC) | Service | Value Proposition | Complexity | Risk Assessment |
-|---------------|---------|-------------------|------------|-----------------|
-| `GetSDKInfo` | ResolveService | Unified SDK version resolution replacing all GetXxxVersion RPCs | MEDIUM | HIGH -- likely called by `buf generate` with `--managed` mode; must test if `buf mod update` calls it |
-| `GetCargoVersion` | ResolveService | Rust Cargo SDK version | LOW | LOW -- niche, only called for Rust plugins |
-| `GetNugetVersion` | ResolveService | .NET NuGet SDK version | LOW | LOW -- niche, only called for .NET plugins |
-| `GetCmakeVersion` | ResolveService | C++ CMake SDK version | LOW | LOW -- niche, only called for C++ plugins |
-| `AddRepositoryGroup` | RepositoryService | IdP group management | LOW | LOW -- write operation, proxy is read-only |
-| `UpdateRepositoryGroup` | RepositoryService | IdP group management | LOW | LOW -- write operation, proxy is read-only |
-| `RemoveRepositoryGroup` | RepositoryService | IdP group management | LOW | LOW -- write operation, proxy is read-only |
-
-### RPCs REMOVED in v1.69.0 (existed in old, not in new)
-
-| Feature (RPC) | Service | Impact | Notes |
-|---------------|---------|--------|-------|
-| `GetRepositoryContributor` | RepositoryService | LOW | Was never implemented by proxy; old clients may call it, new clients will not |
-| `GetReviewFlowGracePeriodPolicy` | AdminService | NONE | Proxy never implemented AdminService |
-| `UpdateReviewFlowGracePeriodPolicy` | AdminService | NONE | Proxy never implemented AdminService |
-| `SetOrganizationMember` | OrganizationService | NONE | Proxy never implemented OrganizationService |
-| `GetUserPluginPreferences` | UserService | NONE | Proxy never implemented UserService |
-| `UpdateUserPluginPreferences` | UserService | NONE | Proxy never implemented UserService |
-
-### Message-Level Changes in Existing RPCs
-
-These changes affect message types but NOT the request/response of the RPCs the proxy implements.
-
-| Change | File | Impact on Proxy |
-|--------|------|-----------------|
-| `LocalModuleResolveResult.is_bsr_head` field removed (reserved) | resolve.proto | NONE -- proxy does not use `LocalResolveService` |
-| `GetRemotePackageVersionPlugin` gained `revision` field (field 4) | resolve.proto | LOW -- only affects GetXxxVersion RPCs which proxy returns Unimplemented |
-| `Organization.idp_groups` changed from `repeated string` to `repeated IdPGroup` | organization.proto | NONE -- proxy does not use OrganizationService |
-| Search results gained new fields (latest_spdx_license_id, owner_verification_status, url, latest_commit_time) | search.proto | NONE -- proxy does not implement SearchService |
-| Plugin messages gained `doc`, `collections`, `deprecated` fields | plugin_curation.proto | NONE -- proxy does not serve plugins |
-| New config types: `CargoConfig`, `NugetConfig`, `CmakeConfig` | plugin_curation.proto | NONE -- proxy does not serve plugins |
-| `DisplayService` gained `DisplayPluginElements` RPC | display.proto | NONE -- proxy does not implement DisplayService |
-
-## Anti-Features (Things to Explicitly NOT Implement)
-
-| Anti-Feature | Why Avoid | What to Do Instead |
-|--------------|-----------|-------------------|
-| Separate service route paths for old vs new protocol | Both versions use identical gRPC procedure paths; no dual registration needed | Use single Connect handler that serves all RPCs |
-| Implementing any GetXxxVersion RPCs | These require BSR plugin registry knowledge the proxy does not have | Return `CodeUnimplemented`; buf CLI falls back gracefully |
-| Implementing `GetSDKInfo` fully | Requires BSR plugin/module metadata the proxy cannot provide | Return `CodeUnimplemented` UNLESS testing proves `buf mod update` requires it |
-| Implementing `SyncService`, `LabelService`, `RecommendationService` | These are BSR-only features removed in v1.69.0; proxy never had them | Not applicable |
-| Implementing write operations (Create/Delete/Update) | Proxy is read-only by design | Return `CodeUnimplemented` |
-| Generating code from the NEW proto into the same Go package as old proto | The old generated code is in `gen/proto/`; generating new code into the same paths will overwrite and may break imports | Generate new proto code into a separate directory (e.g., `gen/proto-v2/`) or replace the old generation entirely if only new protocol is needed |
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **Log full response body at INFO level** | "I want to see what the server returned without enabling debug" | Response bodies can be large (megabytes of proto content in bulk download). Logging at INFO floods storage and slows the server. | Log response body only at DEBUG level, truncated to first 4KB, with an explicit `body_truncated` flag. |
+| **Sensitive data in error logs** | "The error message says 'token rejected', but I need to see which token" | Tokens, passwords, and auth headers must NEVER appear in logs. | Never log raw tokens. Log a token hash prefix or the owner/repo name that was associated with the token. Already handled for headers -- extend same rule to body logging. |
+| **Per-request full protobuf deserialization into logs** | "I want to see the decoded protobuf fields in the log" | Protobuf binary -> JSON conversion is expensive and adds allocation pressure on every request, even when not logged. | Use protobuf's `proto.Size()` for request size (already computed, no deserialization). Only do full deserialization if a dedicated debug-on-demand mode is enabled. |
+| **Distributed tracing integration (OpenTelemetry)** | "We should have proper trace propagation" | Adds significant dependency (opentelemetry-go SDK), configuration burden, and infrastructure (collector, backend). Overkill for a stateless proxy with <10 spans per request. | Correlation ID + structured log attributes achieve 90% of the debugging value with zero new dependencies. |
 
 ## Feature Dependencies
 
 ```
-RepositoryService.GetRepositoryByFullName (existing)
-    -> provider.GetMeta()
-    -> No dependencies on other RPCs
+Correlation ID propagation
+    ├──requires──> Context key type + context helper package
+    │
+    ├──enables──> Error-path structured logging (can reference requestID)
+    ├──enables──> Connect RPC interceptor logging (can include requestID)
+    ├──enables──> Provider call tracing (can include requestID)
+    └──enables──> Request/response body logging (can include requestID)
 
-ResolveService.GetModulePins (existing)
-    -> provider.GetMeta() for each module reference
-    -> No dependencies on other RPCs
+Error-path structured logging
+    └──requires──> slog.Logger accessible in all handler contexts (already satisfied)
 
-DownloadService.DownloadManifestAndBlobs (existing)
-    -> provider.GetFiles()
-    -> No dependencies on other RPCs
-    -> NOTE: buf CLI calls GetModulePins BEFORE this to get commit hash
+Runtime-configurable log level
+    ├──option──> Signal handler (SIGUSR1) -- simplest, no deps
+    └──option──> Admin HTTP endpoint -- needs separate listener for security
 
-Core workflow path:
-    buf mod update ->
-        ResolveService.GetModulePins ->
-        DownloadService.DownloadManifestAndBlobs
+Panic recovery middleware
+    └──requires──> Wrapping the entire ServeMux (handle order: panic recovery outermost, then logging, then mux)
 
-Repository discovery path:
-    buf mod update ->
-        RepositoryService.GetRepositoryByFullName OR GetRepositoriesByFullName ->
-        ResolveService.GetModulePins ->
-        DownloadService.DownloadManifestAndBlobs
+Log sampling / rate limiting
+    └──enhances──> Runtime-configurable log level (header-based debug opt-in)
 ```
 
-No new RPC dependencies exist between the old and new protocol. The new RPCs in ResolveService (`GetSDKInfo`, `GetCargoVersion`, etc.) are independent of the core workflow.
+### Dependency Notes
 
-## MVP Recommendation
+- **Correlation ID propagation must come first** -- all other logging features benefit from having a request ID in context. Without it, logs from different components cannot be correlated.
+- **Error-path structured logging can be done incrementally** -- each handler can be instrumented independently, starting with most-failing paths first (Download, Graph are the most complex).
+- **Connect RPC interceptor is independent from v1beta1 raw handler instrumentation** -- the 3 connect handlers get logging via interceptors, the 4 v1beta1 handler functions need manual wrapping.
+- **Request body logging must be behind a separate guard** -- even at debug level, body logging should check `log.Enabled(ctx, LevelDebug)` AND an explicit body-logging flag or header, because body content can be large.
+- **Runtime log level does not need to be dynamic for MVP** -- static level at startup is acceptable for initial release; runtime reload can be added later.
+- **Log sampling should be deferred** -- not needed until production load requires it. Start with header-based selective debug.
 
-### Phase 1: Validate existing implementation with new buf CLI
-Priority: Test that the existing three RPCs work with buf v1.69.0+
+## MVP Definition
 
-1. `GetRepositoryByFullName` (existing, unchanged)
-2. `GetModulePins` (existing, unchanged)
-3. `DownloadManifestAndBlobs` (existing, unchanged)
+### Launch With (v1.3)
 
-**Rationale:** The proto message structures for these three RPCs are identical between old and new. The new buf CLI calls the same HTTP procedure paths. The most likely outcome is: it just works.
+The minimum needed to make 400 errors and failures diagnosable without source code access.
 
-### Phase 2: Test and handle edge cases
-Priority: Determine if new buf CLI requires any new RPCs for core workflows
+- [x] **Correlation ID propagation** -- Add `requestID` to `context.Context` in `loggingMiddleware`, extract it in all handlers and providers. This is the foundational feature.
+- [x] **Connect RPC interceptor for structured logging** -- Add a unary interceptor to the 3 connect-go handlers that logs procedure, duration, request_size, response_size, and error code. Mirror buf's own `NewDebugLoggingInterceptor`.
+- [x] **v1beta1 raw handler instrumentation** -- Add per-handler logging to `commits.go` functions (ServeHTTP/GetCommits, ServeGraph, ServeDownload, ServeGetModules). Log owner, module, commit, error, and duration.
+- [x] **Error-path structured logging** -- Every `http.Error()` and every `return nil, fmt.Errorf(...)` in handler code must have an accompanying `log.ErrorContext(...)` or `log.WarnContext(...)` with structured fields (owner, repo, commit, error, requestID).
+- [x] **Provider call tracing at debug level** -- Add `log.Debug` before/after provider calls (GetMeta, GetFiles, Get/Put from cache) with timing and result info, tagged with requestID.
+- [x] **Sensitive data masking for enhanced logging** -- Extend existing header masking to cover any new log paths. For protobuf body dumps, mask text that contains tokens (but protobuf binary is opaque so this is mostly about error string sanitization).
 
-1. Test `buf mod update` with v1.69.0 against proxy -- if it fails, check which RPC is missing
-2. Most likely candidate: `GetSDKInfo` in ResolveService (new unified SDK resolution)
-3. If `GetSDKInfo` is required, implement a minimal version that returns `CodeUnimplemented` with a clear message
+### Add After Validation (v1.4)
 
-### Phase 3: Code generation update
-Priority: Replace old generated code with new proto-generated code
+Features to add once the core diagnostic logging is proven.
 
-1. Generate Go code from the v1.69.0 proto definitions
-2. Regenerate Connect RPC stubs
-3. Verify all existing handler implementations compile against new generated types
-4. Run full test suite with both buf v1.30.1 and v1.69.0
+- [ ] **Runtime log level via signal handler** -- Add `SIGUSR1` handler that toggles between INFO and DEBUG, or an admin HTTP endpoint. Enables live debugging without restart.
+- [ ] **Panic recovery middleware** -- Wrap the ServeMux in a panic-recovery handler that logs stack trace and returns 500. Low risk, high value for stability.
+- [ ] **Request/response body hex dump at debug level** -- Log first 4KB of request body and response body as hex when debug level is enabled AND an opt-in flag/header is present.
 
-**Defer:** Full implementation of `GetSDKInfo`, `GetCargoVersion`, `GetNugetVersion`, `GetCmakeVersion` -- these are only needed if testing proves they are called during `buf mod update` or `buf build` workflows.
+### Future Consideration (v2+)
 
-## Proto File Inventory
+Features to defer until production operational experience proves they're needed.
 
-### Old (v1.30.1 compatible) -- 36 files
-Located at: `api/_third_party/buf/proto/buf/alpha/registry/v1alpha1/`
+- [ ] **Log sampling / rate limiting** -- Hash-based sampling or header-based selective debug for production environments with high request volume.
+- [ ] **OpenTelemetry integration** -- If the organization adopts distributed tracing, replace correlation IDs with trace/span context. Not needed for milestone v1.3.
+- [ ] **Admin HTTP endpoint for log level** -- Separate listener on internal port for live log level adjustment. Signal handler is simpler and sufficient.
+- [ ] **Structured error codes in logs** -- Map each error path to a unique error code string (e.g., "CACHE_GET_FAILED", "GIT_REPO_NOT_FOUND") for easier dashboarding.
 
-### New (v1.69.0) -- 33 files
-Located at: `api/_third_party/buf-v1.69.0/proto/buf/alpha/registry/v1alpha1/`
+## Feature Prioritization Matrix
 
-### Removed (old only)
-- `labels.proto` -- `LabelService` + label types
-- `recommendation.proto` -- recommendation message types
-- `sync.proto` -- `SyncService` + git sync types
+| Feature | User Value | Implementation Cost | Priority | Phase |
+|---------|------------|---------------------|----------|-------|
+| Correlation ID propagation | HIGH | LOW | P1 | v1.3 |
+| Connect RPC interceptor logging | HIGH | LOW | P1 | v1.3 |
+| v1beta1 handler instrumentation | HIGH | MEDIUM | P1 | v1.3 |
+| Error-path structured logging | HIGH | LOW | P1 | v1.3 |
+| Provider call tracing (debug) | MEDIUM | LOW | P1 | v1.3 |
+| Sensitive data masking for logs | HIGH | LOW | P1 | v1.3 |
+| Runtime log level via signal | MEDIUM | LOW | P2 | v1.4 |
+| Panic recovery middleware | MEDIUM | LOW | P2 | v1.4 |
+| Request/response body hex dump | LOW | LOW | P3 | v1.4 |
+| Log sampling / rate limiting | LOW | MEDIUM | P3 | v2+ |
+| OpenTelemetry integration | LOW | HIGH | P3 | v2+ |
+| Admin HTTP endpoint | LOW | MEDIUM | P3 | v2+ |
 
-### Changed (substantive, not just copyright year)
-- `admin.proto` -- removed ReviewFlowGracePeriodPolicy RPCs, added fields to GetClusterUsageRequest
-- `display.proto` -- added `DisplayPluginElements` RPC, added `limited_write` field
-- `organization.proto` -- removed `SetOrganizationMember`, added `UpdateOrganizationGroup`, changed `idp_groups` type
-- `plugin_curation.proto` -- added CargoConfig, NugetConfig, CmakeConfig, DotnetTargetFramework enum, PluginCollection, new fields on Plugin
-- `resolve.proto` -- added `GetSDKInfo`, `GetCargoVersion`, `GetNugetVersion`, `GetCmakeVersion` RPCs; added `revision` to `GetRemotePackageVersionPlugin`; removed `is_bsr_head` from `LocalModuleResolveResult`
-- `repository.proto` -- removed `GetRepositoryContributor` RPC; added `AddRepositoryGroup`, `UpdateRepositoryGroup`, `RemoveRepositoryGroup` RPCs
-- `role.proto` -- added `RepositoryRoleSource` enum
-- `search.proto` -- added fields to search result types
-- `user.proto` -- removed `UserPluginPreference` message and related RPCs
+**Priority key:**
+- P1: Must have for v1.3 diagnostic logging milestone -- without these, 400 errors are not diagnosable.
+- P2: Should have, add in v1.4 when gaps are identified from operational use.
+- P3: Nice to have, production experience may never require these.
 
-### Unchanged (only copyright year)
-- `authn.proto`, `authz.proto`, `convert.proto`, `doc.proto`, `download.proto`, `git_metadata.proto`, `github.proto`, `image.proto`, `jsonschema.proto`, `module.proto`, `owner.proto`, `push.proto`, `reference.proto`, `repository_branch.proto`, `repository_commit.proto`, `repository_tag.proto`, `resource.proto`, `scim_token.proto`, `studio.proto`, `studio_request.proto`, `token.proto`, `verification_status.proto`, `webhook.proto`
+## Implementation Notes
 
-## Key Insight: Minimal Implementation Effort
+### Detailed Feature Breakdown
 
-The proto diff reveals that the core protocol (the 3 RPCs the proxy implements) has NOT changed between v1.30.1 and v1.69.0. The `download.proto` is unchanged (copyright year only). The `GetModulePins` request/response messages in `resolve.proto` are unchanged. The `GetRepositoryByFullName` request/response messages in `repository.proto` are unchanged.
+#### 1. Correlation ID Propagation (P1)
 
-The primary implementation work is:
+**Current state:** `loggingMiddleware` reads `X-Request-Id` from request headers and sets it on the response, but never stores it in `context.Context`.
 
-1. **Code generation**: Generate Go/Connect code from the v1.69.0 protos (replacing or alongside the old generated code)
-2. **Recompile**: Verify existing handler code compiles against new generated types
-3. **Test**: Run buf v1.69.0 against the proxy with real TLS + GitHub API
-4. **Handle new Unimplemented RPCs**: The new generated code will include `GetSDKInfo`, `GetCargoVersion`, `GetNugetVersion`, `GetCmakeVersion` in the `ResolveServiceHandler` interface, plus group management RPCs in `RepositoryServiceHandler`. The `Unimplemented*` handlers will return `CodeUnimplemented` automatically.
+**Implementation:**
+```go
+// In a new package: internal/ctxkeys or similar
+package ctxkeys
 
-The main risk is that `buf v1.69.0` may call `GetSDKInfo` as part of `buf mod update` and may not gracefully handle `CodeUnimplemented`. This must be tested empirically.
+type contextKey struct{ name string }
+
+var RequestID = &contextKey{name: "requestID"}
+
+func WithRequestID(ctx context.Context, id string) context.Context {
+    return context.WithValue(ctx, RequestID, id)
+}
+
+func RequestIDFrom(ctx context.Context) string {
+    if id, ok := ctx.Value(RequestID).(string); ok {
+        return id
+    }
+    return ""
+}
+```
+
+**Touch points:**
+- `loggingMiddleware` -- `r = r.WithContext(ctxkeys.WithRequestID(r.Context(), requestID))`
+- `multisource/repo.go` -- `slog.String("request_id", ctxkeys.RequestIDFrom(ctx))` in every log call
+- `connect/api.go` -- pass requestID context (handlers already receive `r.Context()`)
+- `github/client.go`, `bitbucket/client.go` -- add requestID to existing debug logs
+- `artifactory/artifactory.go` -- add requestID to debug/error logs
+
+#### 2. Connect RPC Interceptor (P1)
+
+**Implementation:**
+
+```go
+// internal/connect/logging.go or similar
+func loggingInterceptor(log *slog.Logger) connect.UnaryInterceptorFunc {
+    return func(next connect.UnaryFunc) connect.UnaryFunc {
+        return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+            start := time.Now()
+            resp, err := next(ctx, req)
+            duration := time.Since(start)
+
+            attrs := []slog.Attr{
+                slog.String("procedure", req.Spec().Procedure),
+                slog.Duration("duration", duration),
+                slog.String("peer", req.Peer().Addr),
+                slog.Int("request_size", proto.Size(req.Any())),
+            }
+            if err != nil {
+                attrs = append(attrs, slog.String("error", err.Error()))
+                attrs = append(attrs, slog.String("code", connect.CodeOf(err).String()))
+            }
+            if resp != nil && resp.Any() != nil {
+                attrs = append(attrs, slog.Int("response_size", proto.Size(resp.Any())))
+            }
+
+            log.LogAttrs(ctx, slog.LevelDebug, "rpc completed", attrs...)
+            return resp, err
+        }
+    }
+}
+```
+
+**Applied in `api.go` `New()` function:**
+```go
+interceptor := loggingInterceptor(log)
+mux.Handle(connect.NewResolveServiceHandler(a, connect.WithInterceptors(interceptor)))
+mux.Handle(connect.NewRepositoryServiceHandler(a, connect.WithInterceptors(interceptor)))
+mux.Handle(connect.NewDownloadServiceHandler(a, connect.WithInterceptors(interceptor)))
+```
+
+#### 3. v1beta1 Raw Handler Instrumentation (P1)
+
+For each of the 4 handler entry points in `commitServiceHandler`, add logging before the handler logic and in error paths:
+
+- `ServeHTTP` (GetCommits): Log the parsed refs (owner/module), results, and any errors.
+- `ServeGraph`: Log the parsed refs, cache hit vs miss, digest computation, and errors.
+- `ServeDownload`: Log commit ID lookup, cache hit vs miss, files fetched, and errors.
+- `ServeGetModules`: Log module keys resolved and errors.
+
+The handler already has access to `h.api.log`. Key pattern for each:
+
+```go
+refs := parseResourceRefs(body)
+h.api.log.DebugContext(r.Context(), "GetCommits request",
+    slog.Int("refs", len(refs)),
+)
+```
+
+Error paths:
+```go
+h.api.log.ErrorContext(r.Context(), "GetCommits failed",
+    slog.String("owner", ref.owner),
+    slog.String("module", ref.module),
+    slog.String("error", err.Error()),
+)
+http.Error(w, fmt.Sprintf("resolving %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError)
+```
+
+#### 4. Error-Path Structured Logging (P1)
+
+**Touch points (exhaustive):**
+
+| File | Function | Error Path |
+|------|----------|------------|
+| `connect/commits.go` | ServeHTTP | `GetMeta` error, `computeB4Digest` error, `toB5Digest` error |
+| `connect/commits.go` | ServeGraph | `GetMeta` error (direct and fallback), `computeB4Digest` error, `toB5Digest` error |
+| `connect/commits.go` | ServeDownload | `GetMeta` error, `GetFiles` error |
+| `connect/commits.go` | ServeGetModules | All paths already return 400 |
+| `connect/modulepins.go` | resolveModulePin | `GetMeta` error |
+| `connect/bynames.go` | resolveRepoByFullName | `splitRepoName` validation, `GetMeta` error |
+| `connect/blobs.go` | DownloadManifestAndBlobs | `GetFiles` error, `shake256` error |
+| `multisource/repo.go` | GetMeta | `findSource` returning nil |
+| `multisource/repo.go` | GetFiles | `findSource` returning nil, `GetFiles` error |
+| `providers/github/getrepo.go` | getRepo | API errors, empty default branch |
+| `providers/github/getfiles.go` | GetFiles | API errors |
+| `providers/github/getfiles.go` | getFile | Download errors |
+| `providers/bitbucket/getrepo.go` | (similar) | API errors |
+| `providers/bitbucket/getfiles.go` | (similar) | API errors |
+| `providers/cache/artifactory/artifactory.go` | Get/Put | HTTP errors, body errors |
+
+**Pattern:**
+```go
+if err != nil {
+    log.ErrorContext(ctx, "github getMeta failed",
+        slog.String("owner", owner),
+        slog.String("repo", repoName),
+        slog.String("error", err.Error()),
+    )
+    return out, fmt.Errorf("resolving default branch: %w", err)
+}
+```
+
+#### 5. Provider Call Tracing at Debug Level (P1)
+
+Already partially done in `multisource/repo.go`. Extend to:
+- `github/getrepo.go` `getRepo` -- log before/after `c.repos.Get()` and `c.repos.GetBranch()` calls
+- `github/getfiles.go` `GetFiles` -- log number of entries found, time to download
+- `bitbucket/getrepo.go`, `bitbucket/getfiles.go` -- same
+- `artifactory/artifactory.go` `Get`/`Put` -- log URL, timing, status
+
+#### 6. Runtime Log Level via Signal Handler (P2)
+
+```go
+var logLevel slog.LevelVar
+logLevel.Set(slog.LevelInfo)
+handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &logLevel})
+logger := slog.New(handler)
+
+signal.Notify(c, syscall.SIGUSR1)
+go func() {
+    for range c {
+        if logLevel.Level() == slog.LevelDebug {
+            logLevel.Set(slog.LevelInfo)
+        } else {
+            logLevel.Set(slog.LevelDebug)
+        }
+        logger.Info("log level changed", "level", logLevel.Level())
+    }
+}()
+```
+
+#### 7. Panic Recovery Middleware (P2)
+
+```go
+func panicRecoveryMiddleware(log *slog.Logger, next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        defer func() {
+            if rec := recover(); rec != nil {
+                log.ErrorContext(r.Context(), "handler panic",
+                    slog.Any("panic", rec),
+                    slog.String("stack", string(debug.Stack())),
+                )
+                http.Error(w, "internal server error", http.StatusInternalServerError)
+            }
+        }()
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+Order in `main.go`:
+```go
+handler := connect.New(log, storage, cfg.Domain)
+handler = panicRecoveryMiddleware(log, handler)     // outermost
+handler = loggingMiddleware(log, handler)            // middle
+```
 
 ## Sources
 
-- Direct proto file comparison: `api/_third_party/buf/proto/buf/alpha/registry/v1alpha1/` vs `api/_third_party/buf-v1.69.0/proto/buf/alpha/registry/v1alpha1/`
-- Existing generated Connect code: `gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect/`
-- Existing handler implementation: `internal/connect/{api.go,bynames.go,modulepins.go,blobs.go}`
-- Module proto: `api/_third_party/buf/proto/buf/alpha/module/v1alpha1/module.proto` (identical to v1.69.0)
+- **buf CLI's own `NewDebugLoggingInterceptor`** (in submodule): Used as reference pattern for connect-go handler-level logging. Source: `api/_third_party/buf/private/bufpkg/bufconnect/interceptors.go:148`.
+- **Existing codebase analysis**: All `.go` files in `cmd/`, `internal/connect/`, `internal/providers/`, `internal/https/`.
+- **Current logging middleware**: `cmd/easyp/main.go:150-206` -- demonstrates existing request ID, duration, status logging pattern.
+- **connect-go v1.19.2**: API for `connect.WithInterceptors()` available in the connect-go library already in `go.mod`.
+- **Go 1.26 `log/slog`**: `slog.LevelVar`, `slog.HandlerOptions.Level`, `log.LogAttrs` are all available in stdlib (Go 1.21+).
+
+---
+*Feature research for: diagnostic logging for Connect RPC proxy*
+*Researched: 2026-06-16*
