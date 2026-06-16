@@ -5,3 +5,17 @@ bin
 draft.txt
 
 testdata/buf/
+
+# Build artifacts
+.build/
+easyp
+
+# Local runtime files
+local.run.yml
+local-run.sh
+test.env
+yadro.yaml
+1/
+
+# Cache and storage
+.storage/

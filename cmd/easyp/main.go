@@ -40,7 +40,7 @@ func main() {
 	flag.Parse()
 	var (
 		cfg      = must(config.ReadYaml[config.Config](*cfgFile))
-		log      = newLogger(cfg.Log.Level)
+		log      = newLogger(cfg.Log)
 		nameLock = namedlocks.New(minNumberOfRepos)
 		cache    = buildCache(log, cfg.Cache)
 		storage  = multisource.New(
@@ -127,9 +127,14 @@ func checkRepositoryConnections(log *slog.Logger, storage multisource.Repo) {
 	}
 }
 
-func newLogger(level string) *slog.Logger {
+func newLogger(cfg config.LogConfig) *slog.Logger {
+	levelStr := cfg.Level
+	if envLevel := os.Getenv("EASYP_LOG_LEVEL"); envLevel != "" {
+		levelStr = envLevel
+	}
+
 	var logLevel slog.Level
-	switch strings.ToLower(level) {
+	switch strings.ToLower(levelStr) {
 	case "debug":
 		logLevel = slog.LevelDebug
 	case "warn", "warning":
@@ -139,11 +144,32 @@ func newLogger(level string) *slog.Logger {
 	default:
 		logLevel = slog.LevelInfo
 	}
+
+	formatStr := cfg.Format
+	if envFormat := os.Getenv("EASYP_LOG_FORMAT"); envFormat != "" {
+		formatStr = envFormat
+	}
+
 	opts := &slog.HandlerOptions{
 		Level:     logLevel,
-		AddSource: false,
+		AddSource: cfg.AddSource,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if isSensitiveAttr(a.Key) {
+				return slog.String(a.Key, "***")
+			}
+			return a
+		},
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+
+	var handler slog.Handler
+	switch strings.ToLower(formatStr) {
+	case "text":
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	default:
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	}
+
+	return slog.New(handler)
 }
 
 // Enhanced HTTP logging with security and optimization
@@ -231,6 +257,13 @@ func isSensitiveHeader(key string) bool { //nolint:ireturn
 		key == "cookie" ||
 		key == "x-api-key" ||
 		key == "token"
+}
+
+func isSensitiveAttr(key string) bool {
+	k := strings.ToLower(key)
+	return k == "token" || k == "password" || k == "secret" ||
+		k == "authorization" || k == "access_token" ||
+		k == "api_key" || k == "auth"
 }
 
 type loggingResponseWriter struct { //nolint:ireturn
