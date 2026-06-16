@@ -6,7 +6,9 @@ import (
 
 	"log/slog"
 
-	connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
+	"connectrpc.com/connect"
+
+	v1alpha1connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
@@ -17,9 +19,9 @@ type provider interface {
 
 type api struct {
 	log *slog.Logger
-	connect.UnimplementedRepositoryServiceHandler
-	connect.UnimplementedResolveServiceHandler
-	connect.UnimplementedDownloadServiceHandler
+	v1alpha1connect.UnimplementedRepositoryServiceHandler
+	v1alpha1connect.UnimplementedResolveServiceHandler
+	v1alpha1connect.UnimplementedDownloadServiceHandler
 	repo   provider
 	domain string
 }
@@ -34,6 +36,7 @@ func New(
 	log *slog.Logger,
 	core provider,
 	domain string,
+	opts ...connect.HandlerOption,
 ) *http.ServeMux {
 	a := &api{ //nolint:exhaustruct
 		log:    log,
@@ -43,9 +46,9 @@ func New(
 
 	mux := http.NewServeMux()
 
-	mux.Handle(connect.NewResolveServiceHandler(a))
-	mux.Handle(connect.NewRepositoryServiceHandler(a))
-	mux.Handle(connect.NewDownloadServiceHandler(a))
+	mux.Handle(v1alpha1connect.NewResolveServiceHandler(a, opts...))
+	mux.Handle(v1alpha1connect.NewRepositoryServiceHandler(a, opts...))
+	mux.Handle(v1alpha1connect.NewDownloadServiceHandler(a, opts...))
 
 	// CommitService/GraphService/DownloadService handlers for buf CLI v1.69.0+.
 	// Both v1 and v1beta1 paths are registered because buf CLI uses v1beta1
