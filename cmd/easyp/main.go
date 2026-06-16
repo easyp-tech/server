@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -53,7 +54,7 @@ func main() {
 			githubProxy(log, cfg.Proxy.Github),
 		)
 		handler = connect.New(log, storage, cfg.Domain, connect.NewLoggingInterceptor(log))
-		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), loggingMiddleware(log, handler)) } //nolint:gosec
+		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), panicRecoveryMiddleware(log, loggingMiddleware(log, handler))) } //nolint:gosec
 	)
 
 	checkRepositoryConnections(log, storage)
@@ -62,7 +63,7 @@ func main() {
 
 	if cfg.TLS.CertFile != "" {
 		serve = func() error {
-			return https.ListenAndServe(cfg.Listen, loggingMiddleware(log, handler), cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
+			return https.ListenAndServe(cfg.Listen, panicRecoveryMiddleware(log, loggingMiddleware(log, handler)), cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
 		}
 	}
 
@@ -221,6 +222,23 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 			slog.Duration("duration", duration),
 		}
 		log.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)
+	})
+}
+
+// panicRecoveryMiddleware catches panics, logs them with full stack trace,
+// and returns HTTP 500 to the client (OPS-01).
+func panicRecoveryMiddleware(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.ErrorContext(r.Context(), "handler panic",
+					slog.Any("panic", rec),
+					slog.String("stack", string(debug.Stack())),
+				)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
