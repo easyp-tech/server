@@ -13,6 +13,7 @@ import (
 
 	"log/slog"
 
+	connectpkg "github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
@@ -60,48 +61,91 @@ func (c artifactory) Get(
 	commit string,
 	configHash string,
 ) ([]content.File, error) {
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodGet,
-		strings.Join([]string{c.baseURL, owner, repoName, configHash, commit + ".json"}, "/"),
-		nil,
-	)
+	reqID := connectpkg.RequestIDFrom(ctx)
+	url := strings.Join([]string{c.baseURL, owner, repoName, configHash, commit + ".json"}, "/")
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
-
 	req.SetBasicAuth(c.user, c.password)
 
+	start := time.Now()
+	c.log.DebugContext(ctx, "cache Get start",
+		slog.String("cache_type", "artifactory"),
+		slog.String("url", url),
+		slog.String("request_id", reqID),
+	)
 	resp, err := c.client.Do(req)
+	dur := time.Since(start)
 	if err != nil {
-		return nil, fmt.Errorf("getting %q: %w", req.URL.String(), err)
+		if errors.Is(err, context.Canceled) {
+			c.log.LogAttrs(ctx, slog.LevelDebug, "cache Get cancelled",
+				slog.String("cache_type", "artifactory"),
+				slog.String("url", url),
+				slog.String("request_id", reqID),
+				slog.Duration("duration", dur),
+			)
+		} else {
+			c.log.LogAttrs(ctx, slog.LevelDebug, "cache Get failed",
+				slog.String("cache_type", "artifactory"),
+				slog.String("url", url),
+				slog.String("request_id", reqID),
+				slog.Duration("duration", dur),
+				slog.String("error", err.Error()),
+			)
+		}
+		return nil, fmt.Errorf("getting %q: %w", url, err)
 	}
-
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
+		c.log.LogAttrs(ctx, slog.LevelDebug, "cache Get miss",
+			slog.String("cache_type", "artifactory"),
+			slog.String("url", url),
+			slog.String("request_id", reqID),
+			slog.Duration("duration", dur),
+			slog.Int("status", resp.StatusCode),
+		)
 		return nil, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("getting %q: response %d: %w", req.URL.String(), resp.StatusCode, ErrUnexpected)
+		c.log.LogAttrs(ctx, slog.LevelDebug, "cache Get unexpected status",
+			slog.String("cache_type", "artifactory"),
+			slog.String("url", url),
+			slog.String("request_id", reqID),
+			slog.Duration("duration", dur),
+			slog.Int("status", resp.StatusCode),
+		)
+		return nil, fmt.Errorf("getting %q: response %d: %w", url, resp.StatusCode, ErrUnexpected)
 	}
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, c.bodyLimit))
 	if err != nil {
-		return nil, fmt.Errorf("reading %q: %w", req.URL.String(), err)
+		return nil, fmt.Errorf("reading %q: %w", url, err)
 	}
 
 	var out []content.File
-
 	if err = json.Unmarshal(data, &out); err != nil { //nolint:musttag
-		return nil, fmt.Errorf("decoding %q: %w", req.URL.String(), err)
+		return nil, fmt.Errorf("decoding %q: %w", url, err)
 	}
+
+	c.log.LogAttrs(ctx, slog.LevelDebug, "cache Get hit",
+		slog.String("cache_type", "artifactory"),
+		slog.String("url", url),
+		slog.String("request_id", reqID),
+		slog.Duration("duration", dur),
+		slog.Int("files", len(out)),
+	)
 
 	return out, nil
 }
 
 func (c artifactory) Put(ctx context.Context, owner, repoName, commit, configHash string, in []content.File) error {
+	reqID := connectpkg.RequestIDFrom(ctx)
+	url := strings.Join([]string{c.baseURL, owner, repoName, configHash, commit + ".json"}, "/")
+
 	var buf bytes.Buffer
 
 	encoder := json.NewEncoder(&buf)
@@ -111,28 +155,59 @@ func (c artifactory) Put(ctx context.Context, owner, repoName, commit, configHas
 		return fmt.Errorf("encoding: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPut,
-		strings.Join([]string{c.baseURL, owner, repoName, configHash, commit + ".json"}, "/"),
-		&buf,
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, &buf)
 	if err != nil {
 		return fmt.Errorf("building request: %w", err)
 	}
-
 	req.SetBasicAuth(c.user, c.password)
 
+	start := time.Now()
+	c.log.DebugContext(ctx, "cache Put start",
+		slog.String("cache_type", "artifactory"),
+		slog.String("url", url),
+		slog.String("request_id", reqID),
+	)
 	resp, err := c.client.Do(req)
+	dur := time.Since(start)
 	if err != nil {
-		return fmt.Errorf("putting %q: %w", req.URL.String(), err)
+		if errors.Is(err, context.Canceled) {
+			c.log.LogAttrs(ctx, slog.LevelDebug, "cache Put cancelled",
+				slog.String("cache_type", "artifactory"),
+				slog.String("url", url),
+				slog.String("request_id", reqID),
+				slog.Duration("duration", dur),
+			)
+		} else {
+			c.log.LogAttrs(ctx, slog.LevelDebug, "cache Put failed",
+				slog.String("cache_type", "artifactory"),
+				slog.String("url", url),
+				slog.String("request_id", reqID),
+				slog.Duration("duration", dur),
+				slog.String("error", err.Error()),
+			)
+		}
+		return fmt.Errorf("putting %q: %w", url, err)
 	}
-
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		return fmt.Errorf("putting %q: response %d: %w", req.URL.String(), resp.StatusCode, ErrUnexpected)
+		c.log.LogAttrs(ctx, slog.LevelDebug, "cache Put unexpected status",
+			slog.String("cache_type", "artifactory"),
+			slog.String("url", url),
+			slog.String("request_id", reqID),
+			slog.Duration("duration", dur),
+			slog.Int("status", resp.StatusCode),
+		)
+		return fmt.Errorf("putting %q: response %d: %w", url, resp.StatusCode, ErrUnexpected)
 	}
+
+	c.log.LogAttrs(ctx, slog.LevelDebug, "cache Put completed",
+		slog.String("cache_type", "artifactory"),
+		slog.String("url", url),
+		slog.String("request_id", reqID),
+		slog.Duration("duration", dur),
+		slog.Int("files", len(in)),
+	)
 
 	return nil
 }
