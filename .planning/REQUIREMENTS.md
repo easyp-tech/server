@@ -65,37 +65,27 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| FOUND-01 | Phase 11 | Pending |
-| FOUND-02 | Phase 11 | Pending |
-| FOUND-03 | Phase 11 | Pending |
-| FOUND-04 | Phase 11 | Pending |
-| INFR-01 | Phase 12 | Pending |
-| INFR-02 | Phase 12 | Pending |
-| INFR-03 | Phase 12 | Pending |
-| ERR-01 | Phase 13 | Pending |
-| ERR-02 | Phase 13 | Pending |
-| ERR-03 | Phase 13 | Pending |
-| ERR-04 | Phase 13 | Pending |
-| ERR-05 | Phase 13 | Pending |
-| PROV-01 | Phase 14 | Pending |
-| PROV-02 | Phase 14 | Pending |
-| OPS-01 | Phase 15 | Pending |
+| FOUND-01 | — | Pending |
+| FOUND-02 | — | Pending |
+| FOUND-03 | — | Pending |
+| FOUND-04 | — | Pending |
+| INFR-01 | — | Pending |
+| INFR-02 | — | Pending |
+| INFR-03 | — | Pending |
+| ERR-01 | — | Pending |
+| ERR-02 | — | Pending |
+| ERR-03 | — | Pending |
+| ERR-04 | — | Pending |
+| ERR-05 | — | Pending |
+| PROV-01 | — | Pending |
+| PROV-02 | — | Pending |
+| OPS-01 | — | Pending |
 
 **Coverage:**
 - v1.3 requirements: 15 total
-- Mapped to phases: 15
-- Unmapped: 0 ✓
-
-### Phase Requirement Summary
-
-| Phase | Requirements |
-|-------|--------------|
-| Phase 11: Logging Foundation | FOUND-01, FOUND-02, FOUND-03, FOUND-04 |
-| Phase 12: Logging Infrastructure | INFR-01, INFR-02, INFR-03 |
-| Phase 13: Error Path Logging | ERR-01, ERR-02, ERR-03, ERR-04, ERR-05 |
-| Phase 14: Provider Logging | PROV-01, PROV-02 |
-| Phase 15: Operational Logging | OPS-01 |
+- Mapped to phases: 0
+- Unmapped: 15 ⚠️
 
 ---
 *Requirements defined: 2026-06-16*
-*Last updated: 2026-06-16 — roadmap created, all 15 v1.3 requirements mapped to phases 11-15*
+*Last updated: 2026-06-16 after initial definition*
