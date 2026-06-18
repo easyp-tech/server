@@ -40,13 +40,13 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.logHandlerError(r, w, "reading body", http.StatusBadRequest)
+		h.badRequest(r, w, "reading body", slog.String("read_error", err.Error()))
 		return
 	}
 
 	refs := parseResourceRefs(body)
 	if len(refs) == 0 {
-		h.logHandlerError(r, w, "no resource refs", http.StatusBadRequest)
+		h.badRequest(r, w, "no resource refs", slog.Int("body_bytes", len(body)))
 		return
 	}
 
@@ -60,23 +60,26 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	for _, ref := range refs {
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
-			h.logHandlerError(r, w, fmt.Sprintf("resolving %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		cid := deterministicID(meta.Commit)
 		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
-			h.logHandlerError(r, w, fmt.Sprintf("computing digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		if isV1 {
 			digest, err = toB5Digest(digest)
 			if err != nil {
-				h.logHandlerError(r, w, fmt.Sprintf("wrapping digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+				h.upstreamError(r, w, fmt.Sprintf("wrapping digest for %s/%s", ref.owner, ref.module),
+					slog.String("owner", ref.owner), slog.String("repo", ref.module),
+					slog.String("upstream_error", err.Error()))
 				return
 			}
 		}
@@ -135,7 +138,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.logHandlerError(r, w, "reading body", http.StatusBadRequest)
+		h.badRequest(r, w, "reading body", slog.String("read_error", err.Error()))
 		return
 	}
 
@@ -182,22 +185,25 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		}
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
-			h.logHandlerError(r, w, fmt.Sprintf("resolving %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		cid := deterministicID(meta.Commit)
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
-			h.logHandlerError(r, w, fmt.Sprintf("computing digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		if isV1 {
 			digest, err = toB5Digest(digest)
 			if err != nil {
-				h.logHandlerError(r, w, fmt.Sprintf("converting digest for %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+				h.upstreamError(r, w, fmt.Sprintf("converting digest for %s/%s", ref.owner, ref.module),
+					slog.String("owner", ref.owner), slog.String("repo", ref.module),
+					slog.String("upstream_error", err.Error()))
 				return
 			}
 		}
@@ -258,7 +264,7 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.logHandlerError(r, w, "reading body", http.StatusBadRequest)
+		h.badRequest(r, w, "reading body", slog.String("read_error", err.Error()))
 		return
 	}
 
@@ -272,7 +278,11 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		h.commitMu.RUnlock()
 	}
 	if ref == nil {
-		h.logHandlerError(r, w, "no resource refs", http.StatusBadRequest)
+		// The DownloadService wire format is just a commit id produced by a prior
+		// GetCommits call. If we have never seen that id, the caller skipped the
+		// warm-up step — surface that explicitly.
+		h.badRequest(r, w, "unknown commit id: must call CommitService/GetCommits first",
+			slog.Int("body_bytes", len(body)))
 		return
 	}
 
@@ -291,14 +301,16 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	} else {
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
-			h.logHandlerError(r, w, fmt.Sprintf("resolving %s/%s: %v", ref.owner, ref.module, err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		files, err = h.api.repo.GetFiles(r.Context(), ref.owner, ref.module, meta.Commit)
 		if err != nil {
-			h.logHandlerError(r, w, fmt.Sprintf("getting files: %v", err), http.StatusInternalServerError,
-				slog.String("owner", ref.owner), slog.String("repo", ref.module))
+			h.upstreamError(r, w, fmt.Sprintf("getting files for %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		cid = deterministicID(meta.Commit)
@@ -392,6 +404,7 @@ func (h *commitServiceHandler) logHandlerError(r *http.Request, w http.ResponseW
 		slog.String("request_id", RequestIDFrom(r.Context())),
 		slog.String("error", msg),
 		slog.Int("status", code),
+		slog.String("error_class", errorClass(code)),
 	}
 	logAttrs = append(logAttrs, attrs...)
 
@@ -404,6 +417,36 @@ func (h *commitServiceHandler) logHandlerError(r *http.Request, w http.ResponseW
 	http.Error(w, msg, code)
 }
 
+// errorClass maps an HTTP status code to a short, grep-friendly class name
+// used in structured logs. Three buckets only:
+//   - "bad_request": 4xx codes caused by client input.
+//   - "upstream": 5xx codes caused by talking to a back-end we don't control.
+//   - "internal": 5xx codes caused by this proxy itself.
+func errorClass(code int) string {
+	switch {
+	case code >= 400 && code < 500:
+		return "bad_request"
+	case code == http.StatusBadGateway || code == http.StatusServiceUnavailable:
+		return "upstream"
+	default:
+		return "internal"
+	}
+}
+
+// badRequest writes a 400 response with the given message and any extra
+// structured log attributes. Use when the client sent a request we cannot
+// parse or that fails our own validation rules.
+func (h *commitServiceHandler) badRequest(r *http.Request, w http.ResponseWriter, msg string, attrs ...slog.Attr) {
+	h.logHandlerError(r, w, msg, http.StatusBadRequest, attrs...)
+}
+
+// upstreamError writes a 502 response with the given message and any extra
+// structured log attributes. Use when the request was well-formed but
+// talking to the back-end registry/provider failed.
+func (h *commitServiceHandler) upstreamError(r *http.Request, w http.ResponseWriter, msg string, attrs ...slog.Attr) {
+	h.logHandlerError(r, w, msg, http.StatusBadGateway, attrs...)
+}
+
 // ServeGetModules handles v1/v1beta1 ModuleService/GetModules.
 func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -413,7 +456,7 @@ func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Re
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.logHandlerError(r, w, "reading body", http.StatusBadRequest)
+		h.badRequest(r, w, "reading body", slog.String("read_error", err.Error()))
 		return
 	}
 
@@ -455,7 +498,7 @@ func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if len(keys) == 0 {
-		h.logHandlerError(r, w, "no module refs", http.StatusBadRequest)
+		h.badRequest(r, w, "no module refs", slog.Int("body_bytes", len(body)))
 		return
 	}
 
