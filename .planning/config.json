@@ -1,10 +1,8 @@
 {
   "mode": "yolo",
-  "depth": "comprehensive",
   "model_profile": "quality",
   "commit_docs": true,
   "parallelization": true,
-  "branching_strategy": "none",
   "workflow": {
     "research": true,
     "plan_check": true,
@@ -12,5 +10,9 @@
     "auto_advance": false,
     "nyquist_validation": true
   },
-  "resolve_model_ids": "omit"
+  "resolve_model_ids": "omit",
+  "git": {
+    "branching_strategy": "none"
+  },
+  "granularity": "fine"
 }

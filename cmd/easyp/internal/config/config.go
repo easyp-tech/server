@@ -17,7 +17,9 @@ type Config struct {
 }
 
 type LogConfig struct {
-	Level string `json:"level"`
+	Level     string `json:"level"`
+	Format    string `json:"format,omitempty"`
+	AddSource bool   `json:"add_source,omitempty"`
 }
 
 type TLSConfig struct {

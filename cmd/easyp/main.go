@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -40,7 +43,7 @@ func main() {
 	flag.Parse()
 	var (
 		cfg      = must(config.ReadYaml[config.Config](*cfgFile))
-		log      = newLogger(cfg.Log.Level)
+		log      = newLogger(cfg.Log)
 		nameLock = namedlocks.New(minNumberOfRepos)
 		cache    = buildCache(log, cfg.Cache)
 		storage  = multisource.New(
@@ -50,8 +53,8 @@ func main() {
 			bbProxy(log, cfg.Proxy.BitBucket),
 			githubProxy(log, cfg.Proxy.Github),
 		)
-		handler = connect.New(log, storage, cfg.Domain)
-		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), loggingMiddleware(log, handler)) } //nolint:gosec
+		handler = connect.New(log, storage, cfg.Domain, connect.NewLoggingInterceptor(log))
+		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), panicRecoveryMiddleware(log, loggingMiddleware(log, handler))) } //nolint:gosec
 	)
 
 	checkRepositoryConnections(log, storage)
@@ -60,7 +63,7 @@ func main() {
 
 	if cfg.TLS.CertFile != "" {
 		serve = func() error {
-			return https.ListenAndServe(cfg.Listen, loggingMiddleware(log, handler), cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
+			return https.ListenAndServe(cfg.Listen, panicRecoveryMiddleware(log, loggingMiddleware(log, handler)), cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
 		}
 	}
 
@@ -127,9 +130,14 @@ func checkRepositoryConnections(log *slog.Logger, storage multisource.Repo) {
 	}
 }
 
-func newLogger(level string) *slog.Logger {
+func newLogger(cfg config.LogConfig) *slog.Logger {
+	levelStr := cfg.Level
+	if envLevel := os.Getenv("EASYP_LOG_LEVEL"); envLevel != "" {
+		levelStr = envLevel
+	}
+
 	var logLevel slog.Level
-	switch strings.ToLower(level) {
+	switch strings.ToLower(levelStr) {
 	case "debug":
 		logLevel = slog.LevelDebug
 	case "warn", "warning":
@@ -139,30 +147,59 @@ func newLogger(level string) *slog.Logger {
 	default:
 		logLevel = slog.LevelInfo
 	}
+
+	formatStr := cfg.Format
+	if envFormat := os.Getenv("EASYP_LOG_FORMAT"); envFormat != "" {
+		formatStr = envFormat
+	}
+
 	opts := &slog.HandlerOptions{
 		Level:     logLevel,
-		AddSource: false,
+		AddSource: cfg.AddSource,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if isSensitiveAttr(a.Key) {
+				return slog.String(a.Key, "***")
+			}
+			return a
+		},
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+
+	var handler slog.Handler
+	switch strings.ToLower(formatStr) {
+	case "text":
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	default:
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	}
+
+	return slog.New(handler)
 }
 
 // Enhanced HTTP logging with security and optimization
 func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
 		start := time.Now()
+
+		// INFR-01: Correlation ID propagation — generate if absent, attach to context
 		requestID := r.Header.Get("X-Request-Id")
+		if requestID == "" {
+			var b [4]byte
+			_, _ = rand.Read(b[:])
+			requestID = hex.EncodeToString(b[:])
+		}
 		w.Header().Set("X-Request-Id", requestID)
 		clientIP := getClientIP(r)
 
+		// Attach request_id to context for downstream propagation (used by connect interceptor)
+		r = r.WithContext(connect.WithRequestID(r.Context(), requestID))
+
 		// Mask sensitive headers in debug logs
-		if log.Enabled(ctx, slog.LevelDebug) {
+		if log.Enabled(r.Context(), slog.LevelDebug) {
 			headers := r.Header.Clone()
 			maskSensitiveHeaders(headers)
-			log.DebugContext(ctx, "request details",
+			log.DebugContext(r.Context(), "request details",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
-				slog.String("request_id", requestID),
 				slog.String("client_ip", clientIP),
 				slog.Any("headers", headers),
 			)
@@ -174,34 +211,34 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 		duration := time.Since(start)
 		status := lrw.status
 
-		// Log errors with appropriate levels
-		if status >= 400 {
-			logLevel := slog.LevelWarn
-			if status >= 500 {
-				logLevel = slog.LevelError
-			}
-
-			log.LogAttrs(ctx, logLevel, "request completed",
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-				slog.String("request_id", requestID),
-				slog.String("client_ip", clientIP),
-				slog.Int("status", status),
-				slog.Int("size", lrw.size),
-				slog.Duration("duration", duration),
-			)
-		} else if log.Enabled(ctx, slog.LevelDebug) {
-			// Log successful requests only in debug mode
-			log.DebugContext(ctx, "request completed",
-				slog.String("method", r.Method),
-				slog.String("path", r.URL.Path),
-				slog.String("request_id", requestID),
-				slog.String("client_ip", clientIP),
-				slog.Int("status", status),
-				slog.Int("size", lrw.size),
-				slog.Duration("duration", duration),
-			)
+		// INFR-03: Middleware logs timing/status at INFO level.
+		// Detailed error diagnostics are logged at handler level (interceptor or v1beta1 handlers).
+		attrs := []slog.Attr{
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("client_ip", clientIP),
+			slog.Int("status", status),
+			slog.Int("size", lrw.size),
+			slog.Duration("duration", duration),
 		}
+		log.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)
+	})
+}
+
+// panicRecoveryMiddleware catches panics, logs them with full stack trace,
+// and returns HTTP 500 to the client (OPS-01).
+func panicRecoveryMiddleware(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.ErrorContext(r.Context(), "handler panic",
+					slog.Any("panic", rec),
+					slog.String("stack", string(debug.Stack())),
+				)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -233,6 +270,13 @@ func isSensitiveHeader(key string) bool { //nolint:ireturn
 		key == "token"
 }
 
+func isSensitiveAttr(key string) bool {
+	k := strings.ToLower(key)
+	return k == "token" || k == "password" || k == "secret" ||
+		k == "authorization" || k == "access_token" ||
+		k == "api_key" || k == "auth"
+}
+
 type loggingResponseWriter struct { //nolint:ireturn
 	http.ResponseWriter
 	status int
@@ -245,6 +289,14 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) { //nolint:ireturn
 }
 
 func (lrw *loggingResponseWriter) Write(b []byte) (int, error) { //nolint:ireturn
+	// net/http implicitly sends "200 OK" on the first Write if the handler
+	// never called WriteHeader. Mirror that into our captured status so the
+	// access log reflects what the client actually received. Without this,
+	// every success path in our handlers (which do Header().Set / Write
+	// without an explicit WriteHeader) would be logged as status:0.
+	if lrw.status == 0 {
+		lrw.status = http.StatusOK
+	}
 	size, err := lrw.ResponseWriter.Write(b)
 	lrw.size += size
 	return size, err

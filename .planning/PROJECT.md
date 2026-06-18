@@ -1,8 +1,14 @@
 # EasyP Buf Proxy — Protocol Modernization
 
-## Current Milestone: Planning Next
+## Current Milestone: v1.3 Diagnostic Logging
 
-**Goal:** Define next milestone scope (performance, new endpoints, or other improvements)
+**Goal:** Improve logging across all request/response paths so that 400 errors and other failures are diagnosable without requiring source code access
+
+**Target features:**
+- Configurable debug-level logging for full request/response tracing
+- Structured diagnostic information on all error paths
+- Log level configuration (e.g., via environment variable or config file)
+- Sensitive data masking preserved in enhanced logging
 
 ## What This Is
 
@@ -79,4 +85,4 @@ The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI 
 This document evolves at phase transitions and milestone boundaries.
 
 ---
-*Last updated: 2026-05-10 after v1.2 milestone completion*
+*Last updated: 2026-06-16 after v1.3 milestone start*

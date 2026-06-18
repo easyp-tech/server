@@ -19,7 +19,7 @@ func (a *api) GetModulePins(
 ) {
 	modulePins, err := a.resolveModulePins(ctx, req.Msg.GetModuleReferences())
 	if err != nil {
-		return nil, fmt.Errorf("getting repository: %w", err)
+		return nil, asConnectError(fmt.Errorf("getting repository: %w", err))
 	}
 
 	return &connect.Response[registry.GetModulePinsResponse]{
