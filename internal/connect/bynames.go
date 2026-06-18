@@ -21,7 +21,7 @@ func (a *api) GetRepositoriesByFullName(
 ) {
 	repositories, err := a.resolveReposByFullNames(ctx, req.Msg.GetFullNames())
 	if err != nil {
-		return nil, fmt.Errorf("getting repositories: %w", err)
+		return nil, asConnectError(fmt.Errorf("getting repositories: %w", err))
 	}
 
 	return &connect.Response[registry.GetRepositoriesByFullNameResponse]{
@@ -38,7 +38,7 @@ func (a *api) GetRepositoryByFullName(
 ) {
 	repository, err := a.resolveRepoByFullName(ctx, req.Msg.GetFullName())
 	if err != nil {
-		return nil, fmt.Errorf("getting repositories: %w", err)
+		return nil, asConnectError(fmt.Errorf("getting repositories: %w", err))
 	}
 
 	return &connect.Response[registry.GetRepositoryByFullNameResponse]{
@@ -64,7 +64,7 @@ func (a *api) resolveReposByFullNames(ctx context.Context, in []string) ([]*regi
 func (a *api) resolveRepoByFullName(ctx context.Context, name string) (*registry.Repository, error) {
 	owner, repositoryName := splitRepoName(name)
 	if repositoryName == "" {
-		return nil, fmt.Errorf("invalid repository name %q: expected owner/repo format", name)
+		return nil, NewValidationError("invalid repository name %q: expected owner/repo format", name)
 	}
 
 	repo, err := a.repo.GetMeta(ctx, owner, repositoryName, "")

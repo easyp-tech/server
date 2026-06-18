@@ -3,16 +3,25 @@ package connect
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"connectrpc.com/connect"
+	registry "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
+	v1alpha1connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/shake256"
 	"google.golang.org/protobuf/encoding/protowire"
 )
+
+// errUpstream is the sentinel error the upstream-failure test injects into
+// the mock provider. It must be distinct from any other error and have a
+// non-empty message so the test can confirm structured logging preserved it.
+var errUpstream = errors.New("upstream is down")
 
 // mockProvider implements provider for testing.
 type mockProvider struct {
@@ -440,4 +449,115 @@ func extractCommitID(msg []byte) string {
 		}
 	}
 	return ""
+}
+
+// --- Error classification tests ---
+
+// TestBadRequest_OnUnknownCommitID pins the stateful "commit id not seen"
+// behavior of DownloadService/Download. The Download handler requires the
+// caller to have already called CommitService/GetCommits (which populates
+// the commitMap). An unknown id is a client protocol error, not an upstream
+// failure — surface it as 400 with an explicit message.
+func TestBadRequest_OnUnknownCommitID(t *testing.T) {
+	p := &mockProvider{}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	for _, path := range []string{
+		"/buf.registry.module.v1.DownloadService/Download",
+		"/buf.registry.module.v1beta1.DownloadService/Download",
+	} {
+		t.Run(path, func(t *testing.T) {
+			body := buildDownloadRequest("000000000000000000000000deadbeef")
+			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				respBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 400; body: %s", resp.StatusCode, respBody)
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if !bytes.Contains(respBody, []byte("unknown commit id")) {
+				t.Errorf("body %q does not mention 'unknown commit id'", respBody)
+			}
+		})
+	}
+}
+
+// TestBadRequest_OnMalformedRepoName pins the connect-go mapping for
+// validation errors: a malformed repository name should produce a
+// CodeInvalidArgument error, which connect-go surfaces as HTTP 400.
+func TestBadRequest_OnMalformedRepoName(t *testing.T) {
+	p := &mockProvider{} // mock never gets called — validation fails first
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := v1alpha1connect.NewRepositoryServiceClient(
+		server.Client(),
+		server.URL,
+	)
+
+	resp, err := client.GetRepositoryByFullName(
+		context.Background(),
+		connect.NewRequest(&registry.GetRepositoryByFullNameRequest{FullName: "nodelimiter"}),
+	)
+	if err == nil {
+		t.Fatalf("expected error, got response: %v", resp)
+	}
+	var cErr *connect.Error
+	if !errors.As(err, &cErr) {
+		t.Fatalf("expected *connect.Error, got %T: %v", err, err)
+	}
+	if cErr.Code() != connect.CodeInvalidArgument {
+		t.Errorf("code = %v, want %v", cErr.Code(), connect.CodeInvalidArgument)
+	}
+}
+
+// TestUpstreamError_OnProviderFailure pins the 502 mapping: when the
+// back-end provider (artifactory/git/...) fails, the proxy must surface
+// that as a 502 Bad Gateway, not 500 Internal Server Error, so clients
+// can tell "we are broken" from "they are broken".
+func TestUpstreamError_OnProviderFailure(t *testing.T) {
+	p := &mockProvider{
+		meta: content.Meta{Commit: "deadbeef", DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "a.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+		err: errUpstream,
+	}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildGetCommitsRequest("owner", "repo")
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.CommitService/GetCommits",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 502; body: %s", resp.StatusCode, respBody)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	// Body should describe which owner/repo failed so an operator can
+	// identify the request from client-side logs, but the raw upstream
+	// error message must NOT leak into the body — it goes into the
+	// structured server log only (as the "upstream_error" attribute).
+	if !bytes.Contains(respBody, []byte("owner/repo")) {
+		t.Errorf("body %q does not identify failing module", respBody)
+	}
+	if bytes.Contains(respBody, []byte(errUpstream.Error())) {
+		t.Errorf("body %q leaks internal upstream error — should be in logs only", respBody)
+	}
 }
