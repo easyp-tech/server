@@ -289,6 +289,14 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) { //nolint:ireturn
 }
 
 func (lrw *loggingResponseWriter) Write(b []byte) (int, error) { //nolint:ireturn
+	// net/http implicitly sends "200 OK" on the first Write if the handler
+	// never called WriteHeader. Mirror that into our captured status so the
+	// access log reflects what the client actually received. Without this,
+	// every success path in our handlers (which do Header().Set / Write
+	// without an explicit WriteHeader) would be logged as status:0.
+	if lrw.status == 0 {
+		lrw.status = http.StatusOK
+	}
 	size, err := lrw.ResponseWriter.Write(b)
 	lrw.size += size
 	return size, err
