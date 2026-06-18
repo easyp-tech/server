@@ -61,7 +61,7 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
-				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
@@ -70,7 +70,7 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
-				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
@@ -78,7 +78,7 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			digest, err = toB5Digest(digest)
 			if err != nil {
 				h.upstreamError(r, w, fmt.Sprintf("wrapping digest for %s/%s", ref.owner, ref.module),
-					slog.String("owner", ref.owner), slog.String("repo", ref.module),
+					slog.String("owner", ref.owner), slog.String("module", ref.module),
 					slog.String("upstream_error", err.Error()))
 				return
 			}
@@ -186,7 +186,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
-				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
@@ -194,7 +194,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
-				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
@@ -202,7 +202,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 			digest, err = toB5Digest(digest)
 			if err != nil {
 				h.upstreamError(r, w, fmt.Sprintf("converting digest for %s/%s", ref.owner, ref.module),
-					slog.String("owner", ref.owner), slog.String("repo", ref.module),
+					slog.String("owner", ref.owner), slog.String("module", ref.module),
 					slog.String("upstream_error", err.Error()))
 				return
 			}
@@ -269,7 +269,8 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	}
 
 	var ref *moduleRef
-	if commitID := parseResourceRefID(body); commitID != "" {
+	commitID := parseResourceRefID(body)
+	if commitID != "" {
 		h.commitMu.RLock()
 		if mapped, ok := h.commitMap[commitID]; ok {
 			r := mapped
@@ -280,8 +281,10 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	if ref == nil {
 		// The DownloadService wire format is just a commit id produced by a prior
 		// GetCommits call. If we have never seen that id, the caller skipped the
-		// warm-up step — surface that explicitly.
+		// warm-up step — surface that explicitly, including the id itself so
+		// operators can correlate with prior GetCommits traffic.
 		h.badRequest(r, w, "unknown commit id: must call CommitService/GetCommits first",
+			slog.String("commit_id", commitID),
 			slog.Int("body_bytes", len(body)))
 		return
 	}
@@ -302,14 +305,14 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
-				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
 		files, err = h.api.repo.GetFiles(r.Context(), ref.owner, ref.module, meta.Commit)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("getting files for %s/%s", ref.owner, ref.module),
-				slog.String("owner", ref.owner), slog.String("repo", ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
@@ -400,6 +403,7 @@ func (h *commitServiceHandler) logHandlerError(r *http.Request, w http.ResponseW
 	}
 
 	logAttrs := []slog.Attr{
+		slog.String("server", h.api.domain),
 		slog.String("protocol", protocol),
 		slog.String("request_id", RequestIDFrom(r.Context())),
 		slog.String("error", msg),
