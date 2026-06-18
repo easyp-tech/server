@@ -8,7 +8,6 @@ testdata/buf/
 
 # Build artifacts
 .build/
-easyp
 
 # Local runtime files
 local.run.yml
