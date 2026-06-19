@@ -1,15 +1,23 @@
 package connect
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/easyp-tech/server/internal/detid"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
 type moduleRef struct {
 	owner  string
 	module string
+}
+
+// deterministicID is the buf-style deterministic id for a module or commit.
+// It delegates to the shared internal/detid package so the upstream trace
+// in internal/providers/multisource can mint the same id without depending
+// on this package (which would create an import cycle).
+func deterministicID(input string) string {
+	return detid.DeterministicID(input)
 }
 
 func parseResourceRefs(msg []byte) []moduleRef {
@@ -86,14 +94,6 @@ func parseResourceRefName(msg []byte) *moduleRef {
 		return &moduleRef{owner: owner, module: module}
 	}
 	return nil
-}
-
-func deterministicID(input string) string {
-	var h uint64
-	for _, c := range input {
-		h = h*31 + uint64(c)
-	}
-	return fmt.Sprintf("%016x%016x", h, h^0xdeadbeefcafebabe)
 }
 
 // parseGetGraphResourceRefs parses GetGraphRequest to extract module references.

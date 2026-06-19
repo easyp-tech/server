@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"log/slog"
 
+	"github.com/easyp-tech/server/internal/detid"
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"
+	"github.com/easyp-tech/server/internal/reqid"
 )
 
 type Provider interface {
@@ -46,77 +49,230 @@ func (r Repo) Repositories() []source.Source {
 	return repos
 }
 
+// reqLogger returns the package logger with the per-request correlation id
+// attached, so every upstream call line carries the same request_id as the
+// matching access log line.
+func (r Repo) reqLogger(ctx context.Context) *slog.Logger {
+	if id := reqid.From(ctx); id != "" {
+		return r.log.With(slog.String("request_id", id))
+	}
+	return r.log
+}
+
 func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error) {
-	r.log.Debug("looking for meta", "owner", owner, "repo", repoName)
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream call",
+		slog.String("target", "multisource.GetMeta"),
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+	)
+	start := time.Now()
 
 	s := r.findSource(owner, repoName)
 	if s == nil {
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream result",
+			slog.String("target", "multisource.GetMeta"),
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.String("outcome", "not_found"),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return content.Meta{}, ErrNotFound
 	}
 
-	r.log.Debug("module found", "source", s.Name(), "config", s.ConfigHash(), "owner", owner, "repo", repoName)
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "source selected",
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+		slog.String("source", s.Name()),
+		slog.String("source_config", s.ConfigHash()),
+	)
 
-	return s.GetMeta(ctx, commit) //nolint:wrapcheck
+	meta, err := s.GetMeta(ctx, commit)
+	if err != nil {
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelWarn, "upstream result",
+			slog.String("target", "multisource.GetMeta"),
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.String("outcome", "error"),
+			slog.String("source", s.Name()),
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
+		return content.Meta{}, err //nolint:wrapcheck
+	}
+
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream result",
+		slog.String("target", "multisource.GetMeta"),
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+		slog.String("resolved_commit", meta.Commit),
+		slog.String("commit_id", detid.DeterministicID(meta.Commit)),
+		slog.String("outcome", "ok"),
+		slog.String("source", s.Name()),
+		slog.Duration("duration", time.Since(start)),
+	)
+	return meta, nil
 }
 
 func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]content.File, error) {
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream call",
+		slog.String("target", "multisource.GetFiles"),
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
+	)
+	start := time.Now()
+
 	s := r.findSource(owner, repoName)
 	if s == nil {
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream result",
+			slog.String("target", "multisource.GetFiles"),
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.String("outcome", "not_found"),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return nil, ErrNotFound
 	}
 
-	r.log.Debug("module found", "source", s.Name(), "config", s.ConfigHash(), "owner", owner, "repo", repoName)
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "source selected",
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+		slog.String("source", s.Name()),
+		slog.String("source_config", s.ConfigHash()),
+	)
 
-	if files := r.cacheGet(ctx, owner, repoName, commit, s.ConfigHash()); files != nil {
+	files, hit, srcLatency, cacheLatency := r.cacheGet(ctx, owner, repoName, commit, s.ConfigHash())
+	if hit {
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream result",
+			slog.String("target", "multisource.GetFiles"),
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.String("outcome", "cache_hit"),
+			slog.String("source", s.Name()),
+			slog.Int("files", len(files)),
+			slog.Int("bytes", fileBytes(files)),
+			slog.Duration("cache_latency", cacheLatency),
+			slog.Duration("duration", time.Since(start)),
+		)
 		return files, nil
 	}
 
-	files, err := s.GetFiles(ctx, commit)
+	sourceStart := time.Now()
+	srcFiles, err := s.GetFiles(ctx, commit)
+	srcLatency = time.Since(sourceStart)
 	if err != nil {
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelWarn, "upstream result",
+			slog.String("target", "multisource.GetFiles"),
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.String("outcome", "error"),
+			slog.String("source", s.Name()),
+			slog.Duration("source_latency", srcLatency),
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("getting files: %w", err)
 	}
 
-	r.cachePut(ctx, owner, repoName, commit, s.ConfigHash(), files)
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "upstream result",
+		slog.String("target", "multisource.GetFiles"),
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
+		slog.String("outcome", "cache_miss"),
+		slog.String("source", s.Name()),
+		slog.Int("files", len(srcFiles)),
+		slog.Int("bytes", fileBytes(srcFiles)),
+		slog.Duration("source_latency", srcLatency),
+		slog.Duration("cache_latency", cacheLatency),
+		slog.Duration("duration", time.Since(start)),
+	)
 
-	return files, nil
+	r.cachePut(ctx, owner, repoName, commit, s.ConfigHash(), srcFiles)
+
+	return srcFiles, nil
 }
 
-func (r Repo) cacheGet(ctx context.Context, owner, repoName, commit, configHash string) []content.File {
+// cacheGet returns (files, hit, srcLatency, cacheLatency).
+// On error the function falls through as a miss; the error is logged at WARN
+// with a per-request correlation id.
+func (r Repo) cacheGet(ctx context.Context, owner, repoName, commit, configHash string) ([]content.File, bool, time.Duration, time.Duration) {
+	var zero time.Duration
+	start := time.Now()
 	files, err := r.cache.Get(ctx, owner, repoName, commit, configHash)
+	cacheLatency := time.Since(start)
 	if err != nil {
-		r.log.Error("cache get failed",
-			"owner", owner,
-			"repo", repoName,
-			"commit", commit,
-			"error", err)
-		return nil
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelWarn, "cache get failed",
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.Duration("cache_latency", cacheLatency),
+			slog.String("error", err.Error()),
+		)
+		return nil, false, zero, cacheLatency
 	}
 
 	if len(files) > 0 {
-		r.log.Debug("cache hit",
-			"owner", owner,
-			"repo", repoName,
-			"commit", commit,
-			"files", len(files))
+		return files, true, zero, cacheLatency
 	}
-	return files
+	return nil, false, zero, cacheLatency
 }
 
 func (r Repo) cachePut(ctx context.Context, owner, repoName, commit, configHash string, files []content.File) {
+	start := time.Now()
 	if err := r.cache.Put(ctx, owner, repoName, commit, configHash, files); err != nil {
-		r.log.Error("cache put failed",
-			"owner", owner,
-			"repo", repoName,
-			"commit", commit,
-			"files", len(files),
-			"error", err)
-	} else {
-		r.log.Debug("cache updated",
-			"owner", owner,
-			"repo", repoName,
-			"commit", commit,
-			"files", len(files))
+		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelWarn, "cache put failed",
+			slog.String("owner", owner),
+			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
+			slog.Int("files", len(files)),
+			slog.Int("bytes", fileBytes(files)),
+			slog.Duration("cache_latency", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
+		return
 	}
+	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "cache put ok",
+		slog.String("owner", owner),
+		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
+		slog.Int("files", len(files)),
+		slog.Int("bytes", fileBytes(files)),
+		slog.Duration("cache_latency", time.Since(start)),
+	)
 }
 
 func (r Repo) findSource(owner, repoName string) source.Source { //nolint:ireturn
@@ -127,4 +283,14 @@ func (r Repo) findSource(owner, repoName string) source.Source { //nolint:iretur
 	}
 
 	return nil
+}
+
+// fileBytes sums the byte size of every file in the slice, for at-a-glance
+// observability in upstream trace lines.
+func fileBytes(files []content.File) int {
+	n := 0
+	for _, f := range files {
+		n += len(f.Data)
+	}
+	return n
 }

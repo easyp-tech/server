@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -39,7 +40,14 @@ func (m *mockProvider) GetFiles(_ context.Context, _, _, _ string) ([]content.Fi
 }
 
 func testMux(p provider) *http.ServeMux {
-	return New(slog.Default(), p, "buf.example.com")
+	return testMuxWithLogger(p, slog.Default())
+}
+
+// testMuxWithLogger is like testMux but injects a custom logger. Used by
+// tests that need to inspect the structured log output (server, commit_id,
+// module, etc.).
+func testMuxWithLogger(p provider, log *slog.Logger) *http.ServeMux {
+	return New(log, p, "buf.example.com")
 }
 
 // buildGetCommitsRequest builds a protobuf-encoded GetCommits request
@@ -457,10 +465,15 @@ func extractCommitID(msg []byte) string {
 // behavior of DownloadService/Download. The Download handler requires the
 // caller to have already called CommitService/GetCommits (which populates
 // the commitMap). An unknown id is a client protocol error, not an upstream
-// failure — surface it as 400 with an explicit message.
+// failure — surface it as 400 with an explicit message and log the commit id
+// itself so operators can correlate with prior GetCommits traffic.
 func TestBadRequest_OnUnknownCommitID(t *testing.T) {
+	const wantCommitID = "000000000000000000000000deadbeef"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
 	p := &mockProvider{}
-	mux := testMux(p)
+	mux := testMuxWithLogger(p, log)
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
@@ -469,7 +482,8 @@ func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 		"/buf.registry.module.v1beta1.DownloadService/Download",
 	} {
 		t.Run(path, func(t *testing.T) {
-			body := buildDownloadRequest("000000000000000000000000deadbeef")
+			logBuf.Reset()
+			body := buildDownloadRequest(wantCommitID)
 			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
@@ -483,6 +497,14 @@ func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 			respBody, _ := io.ReadAll(resp.Body)
 			if !bytes.Contains(respBody, []byte("unknown commit id")) {
 				t.Errorf("body %q does not mention 'unknown commit id'", respBody)
+			}
+
+			logLine := logBuf.String()
+			if !strings.Contains(logLine, `"commit_id":"`+wantCommitID+`"`) {
+				t.Errorf("log does not contain commit_id=%s\nlog: %s", wantCommitID, logLine)
+			}
+			if !strings.Contains(logLine, `"server":"buf.example.com"`) {
+				t.Errorf("log does not contain server attr\nlog: %s", logLine)
 			}
 		})
 	}
@@ -560,4 +582,81 @@ func TestUpstreamError_OnProviderFailure(t *testing.T) {
 	if bytes.Contains(respBody, []byte(errUpstream.Error())) {
 		t.Errorf("body %q leaks internal upstream error — should be in logs only", respBody)
 	}
+}
+
+// TestHandlerError_IncludesServer pins the funnel-level addition of the
+// "server" attribute. Every error log emitted via logHandlerError must
+// carry the proxy domain so operators can identify which instance
+// produced a log line when several are behind a load balancer.
+func TestHandlerError_IncludesServer(t *testing.T) {
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// 405 (method not allowed) is the simplest path through the funnel
+	// because the handler short-circuits before parsing anything.
+	resp, err := http.Get(server.URL + "/buf.registry.module.v1.CommitService/GetCommits")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	logLine := logBuf.String()
+	if !strings.Contains(logLine, `"server":"buf.example.com"`) {
+		t.Errorf("log does not contain server attr\nlog: %s", logLine)
+	}
+	if !strings.Contains(logLine, `"error_class":"bad_request"`) {
+		t.Errorf("log does not contain error_class=bad_request (405)\nlog: %s", logLine)
+	}
+}
+
+// TestHandlerError_UpstreamError_UsesModuleKey pins the rename of the
+// upstream-error attribute key from "repo" to "module". Breaking change
+// for any dashboard that filters on the old key — see the commit message.
+func TestHandlerError_UpstreamError_UsesModuleKey(t *testing.T) {
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		meta: content.Meta{Commit: "deadbeef", DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "a.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+		err: errUpstream,
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildGetCommitsRequest("acme", "widgets")
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.CommitService/GetCommits",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
+	}
+
+	logLine := logBuf.String()
+	if !strings.Contains(logLine, `"module":"widgets"`) {
+		t.Errorf("log does not contain module=widgets\nlog: %s", logLine)
+	}
+	if !strings.Contains(logLine, `"owner":"acme"`) {
+		t.Errorf("log does not contain owner=acme\nlog: %s", logLine)
+	}
+	if !strings.Contains(logLine, `"server":"buf.example.com"`) {
+		t.Errorf("log does not contain server attr\nlog: %s", logLine)
+	}
+	// As of the "max debug info" pass, `repo` is also logged alongside `module`
+	// for the user-facing per-request line. The canonical key for the
+	// module-level lookup is still `module` (verified by the assertions above);
+	// `repo` is supplementary.
 }

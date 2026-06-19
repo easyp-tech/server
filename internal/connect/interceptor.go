@@ -7,21 +7,20 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/easyp-tech/server/internal/reqid"
 )
 
-type requestIDKey struct{}
-
 // WithRequestID stores a request ID in the context for log correlation.
+// Thin wrapper over internal/reqid so callers depending on this package do
+// not have to import the reqid package directly.
 func WithRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, requestIDKey{}, id)
+	return reqid.With(ctx, id)
 }
 
 // RequestIDFrom extracts the request ID from context, returning empty string if absent.
 func RequestIDFrom(ctx context.Context) string {
-	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
-		return id
-	}
-	return ""
+	return reqid.From(ctx)
 }
 
 // NewLoggingInterceptor returns a connect.Option that wraps unary handlers with
@@ -40,25 +39,27 @@ func (i *loggingInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc
 		start := time.Now()
 		procedure := req.Spec().Procedure
 
-		// Attach procedure and request_id to the logger for this RPC
+		// Attach procedure and request_id to the logger for this RPC. request_id
+		// is the join key for correlating this RPC's lines with the access log
+		// emitted by cmd/easyp loggingMiddleware.
 		logger := i.log.With(slog.String("procedure", procedure))
 		if reqID := RequestIDFrom(ctx); reqID != "" {
 			logger = logger.With(slog.String("request_id", reqID))
 		}
 
-		if logger.Enabled(ctx, slog.LevelDebug) {
-			var reqSize int
-			if m := req.Any(); m != nil {
-				if msg, ok := m.(proto.Message); ok {
-					reqSize = proto.Size(msg)
-				}
+		var reqSize int
+		if m := req.Any(); m != nil {
+			if msg, ok := m.(proto.Message); ok {
+				reqSize = proto.Size(msg)
 			}
-
-			logger.LogAttrs(ctx, slog.LevelDebug, "rpc started",
-				slog.String("peer", req.Peer().Addr),
-				slog.Int("request_size", reqSize),
-			)
 		}
+
+		// rpc lifecycle at INFO so it appears in prod logs (was DEBUG previously,
+		// which made the per-RPC trace invisible at the production log level).
+		logger.LogAttrs(ctx, slog.LevelInfo, "rpc started",
+			slog.String("peer", req.Peer().Addr),
+			slog.Int("request_size", reqSize),
+		)
 
 		resp, err := next(ctx, req)
 
@@ -70,7 +71,7 @@ func (i *loggingInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc
 				slog.String("error", err.Error()),
 				slog.String("code", connect.CodeOf(err).String()),
 			)
-		} else if logger.Enabled(ctx, slog.LevelDebug) {
+		} else {
 			var respSize int
 			if resp != nil && resp.Any() != nil {
 				if msg, ok := resp.Any().(proto.Message); ok {
@@ -78,7 +79,7 @@ func (i *loggingInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc
 				}
 			}
 
-			logger.LogAttrs(ctx, slog.LevelDebug, "rpc completed",
+			logger.LogAttrs(ctx, slog.LevelInfo, "rpc completed",
 				slog.Duration("duration", duration),
 				slog.Int("response_size", respSize),
 			)
