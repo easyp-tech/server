@@ -655,8 +655,8 @@ func TestHandlerError_UpstreamError_UsesModuleKey(t *testing.T) {
 	if !strings.Contains(logLine, `"server":"buf.example.com"`) {
 		t.Errorf("log does not contain server attr\nlog: %s", logLine)
 	}
-	// Negative assertion: the old "repo" key must not appear.
-	if strings.Contains(logLine, `"repo":`) {
-		t.Errorf("log still uses 'repo' key (should be 'module')\nlog: %s", logLine)
-	}
+	// As of the "max debug info" pass, `repo` is also logged alongside `module`
+	// for the user-facing per-request line. The canonical key for the
+	// module-level lookup is still `module` (verified by the assertions above);
+	// `repo` is supplementary.
 }

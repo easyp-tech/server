@@ -27,7 +27,7 @@ func TestLoggingMiddleware_CapturesImplicit200(t *testing.T) {
 		_, _ = w.Write([]byte{0x08, 0x01}) // arbitrary bytes
 	})
 
-	mw := loggingMiddleware(log, next)
+	mw := loggingMiddleware(log, "test.example.com", next)
 	server := httptest.NewServer(mw)
 	defer server.Close()
 
@@ -63,7 +63,7 @@ func TestLoggingMiddleware_RecordsExplicitStatus(t *testing.T) {
 		_, _ = w.Write([]byte("coffee"))
 	})
 
-	mw := loggingMiddleware(log, next)
+	mw := loggingMiddleware(log, "test.example.com", next)
 	server := httptest.NewServer(mw)
 	defer server.Close()
 
@@ -95,7 +95,7 @@ func TestLoggingMiddleware_EmptyBodyStillReports200(t *testing.T) {
 		_, _ = w.Write(nil) // w.Write(nil) — explicit empty body, no WriteHeader
 	})
 
-	mw := loggingMiddleware(log, next)
+	mw := loggingMiddleware(log, "test.example.com", next)
 	server := httptest.NewServer(mw)
 	defer server.Close()
 

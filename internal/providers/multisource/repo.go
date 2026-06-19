@@ -8,6 +8,7 @@ import (
 
 	"log/slog"
 
+	"github.com/easyp-tech/server/internal/detid"
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"
 	"github.com/easyp-tech/server/internal/reqid"
@@ -63,6 +64,7 @@ func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (cont
 		slog.String("target", "multisource.GetMeta"),
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
+		slog.String("module", repoName),
 		slog.String("commit", commit),
 	)
 	start := time.Now()
@@ -73,6 +75,9 @@ func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (cont
 			slog.String("target", "multisource.GetMeta"),
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "not_found"),
 			slog.Duration("duration", time.Since(start)),
 		)
@@ -82,6 +87,8 @@ func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (cont
 	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "source selected",
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
 		slog.String("source", s.Name()),
 		slog.String("source_config", s.ConfigHash()),
 	)
@@ -92,7 +99,11 @@ func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (cont
 			slog.String("target", "multisource.GetMeta"),
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "error"),
+			slog.String("source", s.Name()),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("error", err.Error()),
 		)
@@ -103,8 +114,12 @@ func (r Repo) GetMeta(ctx context.Context, owner, repoName, commit string) (cont
 		slog.String("target", "multisource.GetMeta"),
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
-		slog.String("outcome", "ok"),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
 		slog.String("resolved_commit", meta.Commit),
+		slog.String("commit_id", detid.DeterministicID(meta.Commit)),
+		slog.String("outcome", "ok"),
+		slog.String("source", s.Name()),
 		slog.Duration("duration", time.Since(start)),
 	)
 	return meta, nil
@@ -115,7 +130,9 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 		slog.String("target", "multisource.GetFiles"),
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
+		slog.String("module", repoName),
 		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
 	)
 	start := time.Now()
 
@@ -125,6 +142,9 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 			slog.String("target", "multisource.GetFiles"),
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "not_found"),
 			slog.Duration("duration", time.Since(start)),
 		)
@@ -134,6 +154,8 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "source selected",
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
+		slog.String("module", repoName),
+		slog.String("commit", commit),
 		slog.String("source", s.Name()),
 		slog.String("source_config", s.ConfigHash()),
 	)
@@ -144,8 +166,11 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 			slog.String("target", "multisource.GetFiles"),
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
 			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "cache_hit"),
+			slog.String("source", s.Name()),
 			slog.Int("files", len(files)),
 			slog.Int("bytes", fileBytes(files)),
 			slog.Duration("cache_latency", cacheLatency),
@@ -162,7 +187,9 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 			slog.String("target", "multisource.GetFiles"),
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
 			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "error"),
 			slog.String("source", s.Name()),
 			slog.Duration("source_latency", srcLatency),
@@ -176,7 +203,9 @@ func (r Repo) GetFiles(ctx context.Context, owner, repoName, commit string) ([]c
 		slog.String("target", "multisource.GetFiles"),
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
+		slog.String("module", repoName),
 		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
 		slog.String("outcome", "cache_miss"),
 		slog.String("source", s.Name()),
 		slog.Int("files", len(srcFiles)),
@@ -203,7 +232,9 @@ func (r Repo) cacheGet(ctx context.Context, owner, repoName, commit, configHash 
 		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelWarn, "cache get failed",
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
 			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.Duration("cache_latency", cacheLatency),
 			slog.String("error", err.Error()),
 		)
@@ -222,7 +253,9 @@ func (r Repo) cachePut(ctx context.Context, owner, repoName, commit, configHash 
 		r.reqLogger(ctx).LogAttrs(ctx, slog.LevelWarn, "cache put failed",
 			slog.String("owner", owner),
 			slog.String("repo", repoName),
+			slog.String("module", repoName),
 			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.Int("files", len(files)),
 			slog.Int("bytes", fileBytes(files)),
 			slog.Duration("cache_latency", time.Since(start)),
@@ -233,7 +266,9 @@ func (r Repo) cachePut(ctx context.Context, owner, repoName, commit, configHash 
 	r.reqLogger(ctx).LogAttrs(ctx, slog.LevelInfo, "cache put ok",
 		slog.String("owner", owner),
 		slog.String("repo", repoName),
+		slog.String("module", repoName),
 		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
 		slog.Int("files", len(files)),
 		slog.Int("bytes", fileBytes(files)),
 		slog.Duration("cache_latency", time.Since(start)),

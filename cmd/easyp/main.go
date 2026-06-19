@@ -54,7 +54,7 @@ func main() {
 			githubProxy(log, cfg.Proxy.Github),
 		)
 		handler = connect.New(log, storage, cfg.Domain, connect.NewLoggingInterceptor(log))
-		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), panicRecoveryMiddleware(log, loggingMiddleware(log, handler))) } //nolint:gosec
+		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), panicRecoveryMiddleware(log, loggingMiddleware(log, cfg.Domain, handler))) } //nolint:gosec
 	)
 
 	checkRepositoryConnections(log, storage)
@@ -63,7 +63,7 @@ func main() {
 
 	if cfg.TLS.CertFile != "" {
 		serve = func() error {
-			return https.ListenAndServe(cfg.Listen, panicRecoveryMiddleware(log, loggingMiddleware(log, handler)), cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
+			return https.ListenAndServe(cfg.Listen, panicRecoveryMiddleware(log, loggingMiddleware(log, cfg.Domain, handler)), cfg.TLS.CertFile, cfg.TLS.KeyFile, cfg.TLS.CACertFile)
 		}
 	}
 
@@ -176,7 +176,7 @@ func newLogger(cfg config.LogConfig) *slog.Logger {
 }
 
 // Enhanced HTTP logging with security and optimization
-func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
+func loggingMiddleware(log *slog.Logger, server string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -195,7 +195,12 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 
 		// Per-request logger carries request_id on every subsequent log line emitted
 		// during this request's lifetime (handler errors, upstream calls, etc.).
-		reqLog := log.With(slog.String("request_id", requestID))
+		// We also bind `server` (the configured domain) so every line is
+		// independently identifiable in multi-tenant / cross-pod correlation.
+		reqLog := log.With(
+			slog.String("request_id", requestID),
+			slog.String("server", server),
+		)
 
 		// Per-request lifecycle: log entry at INFO so we can correlate entry/exit
 		// and reconstruct the full request timeline from the two log lines.
@@ -203,6 +208,9 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
 			slog.String("client_ip", clientIP),
+			slog.Int64("body_size", r.ContentLength),
+			slog.String("content_type", r.Header.Get("Content-Type")),
+			slog.String("user_agent", r.Header.Get("User-Agent")),
 		)
 
 		// Mask sensitive headers in debug logs
@@ -213,6 +221,9 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.String("client_ip", clientIP),
+				slog.Int64("body_size", r.ContentLength),
+				slog.String("content_type", r.Header.Get("Content-Type")),
+				slog.String("user_agent", r.Header.Get("User-Agent")),
 				slog.Any("headers", headers),
 			)
 		}
@@ -231,6 +242,9 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 			slog.String("client_ip", clientIP),
 			slog.Int("status", status),
 			slog.Int("size", lrw.size),
+			slog.Int64("req_body_size", r.ContentLength),
+			slog.String("content_type", r.Header.Get("Content-Type")),
+			slog.String("user_agent", r.Header.Get("User-Agent")),
 			slog.Duration("duration", duration),
 		}
 		reqLog.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)

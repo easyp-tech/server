@@ -16,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 
+	"github.com/easyp-tech/server/internal/detid"
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/providers/localgit/namedlocks"
@@ -128,7 +129,9 @@ func (r sourceRepo) GetMeta(ctx context.Context, commit string) (content.Meta, e
 		slog.String("target", "localgit.GetMeta"),
 		slog.String("owner", r.repo.Owner),
 		slog.String("repo", r.repo.Name),
+		slog.String("module", r.repo.Name),
 		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
 	)
 	start := time.Now()
 
@@ -138,6 +141,9 @@ func (r sourceRepo) GetMeta(ctx context.Context, commit string) (content.Meta, e
 			slog.String("target", "localgit.GetMeta"),
 			slog.String("owner", r.repo.Owner),
 			slog.String("repo", r.repo.Name),
+			slog.String("module", r.repo.Name),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "error"),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("error", err.Error()),
@@ -150,9 +156,12 @@ func (r sourceRepo) GetMeta(ctx context.Context, commit string) (content.Meta, e
 		slog.String("target", "localgit.GetMeta"),
 		slog.String("owner", r.repo.Owner),
 		slog.String("repo", r.repo.Name),
+		slog.String("module", r.repo.Name),
+		slog.String("commit", commit),
+		slog.String("resolved_commit", resolvedCommit),
+		slog.String("commit_id", detid.DeterministicID(resolvedCommit)),
 		slog.String("outcome", "ok"),
 		slog.String("default_branch", defaultBranch),
-		slog.String("resolved_commit", resolvedCommit),
 		slog.Duration("duration", time.Since(start)),
 	)
 	return content.Meta{DefaultBranch: defaultBranch, Commit: resolvedCommit}, nil //nolint:exhaustruct
@@ -166,7 +175,9 @@ func (r sourceRepo) GetFiles(ctx context.Context, commit string) ([]content.File
 		slog.String("target", "localgit.GetFiles"),
 		slog.String("owner", r.repo.Owner),
 		slog.String("repo", r.repo.Name),
+		slog.String("module", r.repo.Name),
 		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
 	)
 	start := time.Now()
 
@@ -175,6 +186,9 @@ func (r sourceRepo) GetFiles(ctx context.Context, commit string) ([]content.File
 			slog.String("target", "localgit.GetFiles"),
 			slog.String("owner", r.repo.Owner),
 			slog.String("repo", r.repo.Name),
+			slog.String("module", r.repo.Name),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "error"),
 			slog.Duration("duration", time.Since(start)),
 			slog.String("error", err.Error()),
@@ -190,6 +204,9 @@ func (r sourceRepo) GetFiles(ctx context.Context, commit string) ([]content.File
 			slog.String("target", "localgit.GetFiles"),
 			slog.String("owner", r.repo.Owner),
 			slog.String("repo", r.repo.Name),
+			slog.String("module", r.repo.Name),
+			slog.String("commit", commit),
+			slog.String("commit_id", detid.DeterministicID(commit)),
 			slog.String("outcome", "error"),
 			slog.Duration("enum_latency", enumLatency),
 			slog.Duration("duration", time.Since(start)),
@@ -202,6 +219,9 @@ func (r sourceRepo) GetFiles(ctx context.Context, commit string) ([]content.File
 		slog.String("target", "localgit.GetFiles"),
 		slog.String("owner", r.repo.Owner),
 		slog.String("repo", r.repo.Name),
+		slog.String("module", r.repo.Name),
+		slog.String("commit", commit),
+		slog.String("commit_id", detid.DeterministicID(commit)),
 		slog.String("outcome", "ok"),
 		slog.Int("files", len(files)),
 		slog.Int("bytes", fileBytes(files)),

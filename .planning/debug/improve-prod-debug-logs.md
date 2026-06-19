@@ -30,7 +30,7 @@ updated: 2026-06-18
 - hypothesis: null
 - test: null
 - expecting: null
-- next_action: "Phase A complete (build clean, vet clean, all tests pass). Phase C — surface CHECKPOINT to orchestrator: ship these log changes, deploy to prod, re-run `buf dep update`, capture new logs, and feed them back to the next continuation agent for diagnosis. Do not guess at root cause from old logs."
+- next_action: "Phase B applied: per-request lines are now self-describing (owner, module, repo, commit, commit_id, server, body_size, content_type, user_agent). Build/vet/tests clean. Ship + deploy + re-run; capture new logs and feed back to the next continuation agent for diagnosis."
 - reasoning_checkpoint: null
 
 ## Missing logging (root ask)
@@ -91,6 +91,19 @@ updated: 2026-06-18
   file: internal/providers/localgit/localgit.go:120-147
   finding: "GetMeta and GetFiles do named-lock + git checkout. Slow operations but no log. Together with multisource, this is the upstream trace gap."
 
+- timestamp: 2026-06-19T09:30
+  type: code_analysis
+  file: logs/easyp-buf-proxy.log (291 lines, 63 KB) — local run with Phase A deployed
+  finding: "Phase A is working: every per-request line carries request_id, handler decisions carry owner/module/commit, upstream result lines carry outcome + latency + bytes. New gaps surfaced: (1) the `commit_id_lookup` line in ServeDownload carries `commit_id` and `ref_found` but NOT `owner`/`module`/`commit` — operator cannot tell which repo the bad id came from without joining to a prior GetCommits line; (2) the `digest_b5_wrap`/`digest_b4_keep` lines lack `commit_id` even though they fire for the same ref as the prior `compute_digest` that already logged it; (3) `info_cache_hit` in ServeGraph has `commit_id` but not the resolved `commit`; (4) multisource upstream result lines have `commit` but not the buf-style `commit_id`; (5) the HTTP access log lines (`request received` / `request completed`) do not carry `server` (configured domain) or `body_size`/`content_type`/`user_agent`. User instruction was 'add as much debug info as possible' to every line."
+
+- timestamp: 2026-06-19T09:32
+  type: reasoning
+  finding: "User selected line 285: `commit_id_lookup` for commit_id `32903a3849a8a174ec3d84d783561bca` with `ref_found=true`. From the same log we can see the corresponding `compute_digest` line 77 (owner=googleapis, module=googleapis, commit=034be22b1...) which minted that commit_id. The join is possible today only by manual grep; the new line should carry owner/module/commit directly so the join is free."
+
+- timestamp: 2026-06-19T09:35
+  type: reasoning
+  finding: "The `deterministicID` function lived in `internal/connect/commits_helpers.go` and could not be imported by `internal/providers/multisource` (cycle). Extracted to a new leaf package `internal/detid` so both layers can mint the same buf-style id. Added 3 unit tests for the new package: stable, empty, distinct."
+
 ## Eliminated
 
 - hypothesis: "Root cause is in the existing log lines, we just need to read them more carefully."
@@ -113,8 +126,15 @@ updated: 2026-06-18
 - files_changed:
   - internal/reqid/reqid.go (new) — shared request_id context key
   - internal/reqid/reqid_test.go (new) — round-trip + empty tests
-  - cmd/easyp/main.go — loggingMiddleware now emits 'request received' (entry) and 'request completed' (exit), both carrying request_id; the per-request logger is reused by all handler-level log lines
+  - internal/detid/detid.go (new) — leaf package exporting buf-style deterministicID; shared by connect (handler) and multisource (upstream trace) so commit ids minted in both places round-trip
+  - internal/detid/detid_test.go (new) — stable / empty / distinct tests
+  - internal/connect/commits_helpers.go — drops the in-package deterministicID, delegates to internal/detid
+  - cmd/easyp/main.go — loggingMiddleware now emits 'request received' (entry) and 'request completed' (exit), both carrying request_id; the per-request logger is reused by all handler-level log lines. Phase B: per-request logger also binds `server` (configured domain); access lines add `body_size`, `content_type`, `user_agent` so requests are self-describing
   - internal/connect/interceptor.go — interceptor now delegates to internal/reqid; rpc started / rpc completed lines emit at INFO (was DEBUG), with request_id, peer, request/response size, duration
+  - internal/connect/commits.go — Phase A: ServeGraph/ServeDownload/ServeHTTP decision branches. Phase B: every `commit_id`-bearing line now also carries `owner`/`module`/`repo`/`commit` (resolved git commit). The user-selected `commit_id_lookup` line in ServeDownload now carries the looked-up owner/module/commit (or just `commit_id` when ref is unknown, preserving the original bad-id signal). The new `commit` field on `commitInfoCache` lets `info_cache_hit` and `files_cache_lookup` print the resolved commit without re-resolving. `digest_b5_wrap`/`digest_b4_keep` now carry `commit`/`commit_id`/`is_v1` so all digest-branch lines for the same ref are self-describing
+  - internal/providers/multisource/repo.go — Phase A: GetMeta/GetFiles/cacheGet/cachePut emit at INFO. Phase B: every upstream-result line also carries `module`, `commit_id` (via detid), and `source`. `source selected` now also carries `module`/`commit`
+  - internal/providers/localgit/localgit.go — Phase A: GetMeta/GetFiles log at INFO when request_id is present. Phase B: same enrichment pattern (module, commit_id)
+  - internal/connect/api_test.go — relaxed the negative assertion that forbade `repo`; `module` remains the canonical key (asserted), `repo` is now intentionally logged as supplementary debug info per the new directive
   - internal/connect/commits.go — commitServiceHandler now emits 'handler decision' lines for: parsed (refs, body_bytes, protocol), commit_id_lookup (commit_id, ref_found), files_cache_lookup (info_cache_hit, cached_files), files_cache_hit/files_cache_miss, digest_b5_wrap/digest_b4_keep, resolve_meta, compute_digest (with resolved commit + is_v1 flag). All carry request_id.
   - internal/providers/multisource/repo.go — GetMeta / GetFiles / cacheGet / cachePut now log at INFO with target, owner/repo/commit, source selected, outcome (ok/cache_hit/cache_miss/not_found/error), cache_latency, source_latency, duration, files count, bytes. All carry request_id.
   - internal/providers/localgit/localgit.go — GetMeta / GetFiles now log 'upstream call' / 'upstream result' at INFO with target, owner/repo, commit, outcome, enum_latency, duration, files count, bytes. request_id propagation via internal/reqid.
