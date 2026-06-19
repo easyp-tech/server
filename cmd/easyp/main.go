@@ -193,11 +193,23 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 		// Attach request_id to context for downstream propagation (used by connect interceptor)
 		r = r.WithContext(connect.WithRequestID(r.Context(), requestID))
 
+		// Per-request logger carries request_id on every subsequent log line emitted
+		// during this request's lifetime (handler errors, upstream calls, etc.).
+		reqLog := log.With(slog.String("request_id", requestID))
+
+		// Per-request lifecycle: log entry at INFO so we can correlate entry/exit
+		// and reconstruct the full request timeline from the two log lines.
+		reqLog.LogAttrs(r.Context(), slog.LevelInfo, "request received",
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.String("client_ip", clientIP),
+		)
+
 		// Mask sensitive headers in debug logs
 		if log.Enabled(r.Context(), slog.LevelDebug) {
 			headers := r.Header.Clone()
 			maskSensitiveHeaders(headers)
-			log.DebugContext(r.Context(), "request details",
+			reqLog.LogAttrs(r.Context(), slog.LevelDebug, "request details",
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
 				slog.String("client_ip", clientIP),
@@ -212,7 +224,7 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 		status := lrw.status
 
 		// INFR-03: Middleware logs timing/status at INFO level.
-		// Detailed error diagnostics are logged at handler level (interceptor or v1beta1 handlers).
+		// request_id is attached via reqLog so it joins the "request received" line.
 		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
@@ -221,7 +233,7 @@ func loggingMiddleware(log *slog.Logger, next http.Handler) http.Handler {
 			slog.Int("size", lrw.size),
 			slog.Duration("duration", duration),
 		}
-		log.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)
+		reqLog.LogAttrs(r.Context(), slog.LevelInfo, "request completed", attrs...)
 	})
 }
 

@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"slices"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/providers/localgit/namedlocks"
 	"github.com/easyp-tech/server/internal/providers/source"
+	"github.com/easyp-tech/server/internal/reqid"
 	"github.com/easyp-tech/server/internal/shake256"
 )
 
@@ -117,33 +120,118 @@ func (r sourceRepo) Owner() string    { return r.repo.Owner }
 func (r sourceRepo) RepoName() string { return r.repo.Name }
 func (r sourceRepo) Type() string     { return "local" }
 
-func (r sourceRepo) GetMeta(_ context.Context, commit string) (content.Meta, error) {
+func (r sourceRepo) GetMeta(ctx context.Context, commit string) (content.Meta, error) {
 	l := r.l.Lock(r.dirName)
 	defer l.Unlock()
 
-	defaultBranch, commit, err := getRepoSwitchedCommit(r.dirName, commit)
+	r.trace(ctx, slog.LevelInfo, "upstream call",
+		slog.String("target", "localgit.GetMeta"),
+		slog.String("owner", r.repo.Owner),
+		slog.String("repo", r.repo.Name),
+		slog.String("commit", commit),
+	)
+	start := time.Now()
+
+	defaultBranch, resolvedCommit, err := getRepoSwitchedCommit(r.dirName, commit)
 	if err != nil {
-		return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, //nolint:exhaustruct
-			fmt.Errorf("investigating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, commit, err)
+		r.trace(ctx, slog.LevelWarn, "upstream result",
+			slog.String("target", "localgit.GetMeta"),
+			slog.String("owner", r.repo.Owner),
+			slog.String("repo", r.repo.Name),
+			slog.String("outcome", "error"),
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
+		return content.Meta{DefaultBranch: defaultBranch, Commit: resolvedCommit}, //nolint:exhaustruct
+			fmt.Errorf("investigating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, resolvedCommit, err)
 	}
 
-	return content.Meta{DefaultBranch: defaultBranch, Commit: commit}, nil //nolint:exhaustruct
+	r.trace(ctx, slog.LevelInfo, "upstream result",
+		slog.String("target", "localgit.GetMeta"),
+		slog.String("owner", r.repo.Owner),
+		slog.String("repo", r.repo.Name),
+		slog.String("outcome", "ok"),
+		slog.String("default_branch", defaultBranch),
+		slog.String("resolved_commit", resolvedCommit),
+		slog.Duration("duration", time.Since(start)),
+	)
+	return content.Meta{DefaultBranch: defaultBranch, Commit: resolvedCommit}, nil //nolint:exhaustruct
 }
 
-func (r sourceRepo) GetFiles(_ context.Context, commit string) ([]content.File, error) {
+func (r sourceRepo) GetFiles(ctx context.Context, commit string) ([]content.File, error) {
 	l := r.l.Lock(r.dirName)
 	defer l.Unlock()
 
+	r.trace(ctx, slog.LevelInfo, "upstream call",
+		slog.String("target", "localgit.GetFiles"),
+		slog.String("owner", r.repo.Owner),
+		slog.String("repo", r.repo.Name),
+		slog.String("commit", commit),
+	)
+	start := time.Now()
+
 	if _, _, err := getRepoSwitchedCommit(r.dirName, commit); err != nil {
+		r.trace(ctx, slog.LevelWarn, "upstream result",
+			slog.String("target", "localgit.GetFiles"),
+			slog.String("owner", r.repo.Owner),
+			slog.String("repo", r.repo.Name),
+			slog.String("outcome", "error"),
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
 		return nil, fmt.Errorf("investigating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, commit, err)
 	}
 
+	enumStart := time.Now()
 	files, err := enumerateProto(r.dirName, r.repo)
+	enumLatency := time.Since(enumStart)
 	if err != nil {
+		r.trace(ctx, slog.LevelWarn, "upstream result",
+			slog.String("target", "localgit.GetFiles"),
+			slog.String("owner", r.repo.Owner),
+			slog.String("repo", r.repo.Name),
+			slog.String("outcome", "error"),
+			slog.Duration("enum_latency", enumLatency),
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
 		return files, fmt.Errorf("enumerating %q/%q:%q: %w", r.repo.Owner, r.repo.Name, commit, err)
 	}
 
+	r.trace(ctx, slog.LevelInfo, "upstream result",
+		slog.String("target", "localgit.GetFiles"),
+		slog.String("owner", r.repo.Owner),
+		slog.String("repo", r.repo.Name),
+		slog.String("outcome", "ok"),
+		slog.Int("files", len(files)),
+		slog.Int("bytes", fileBytes(files)),
+		slog.Duration("enum_latency", enumLatency),
+		slog.Duration("duration", time.Since(start)),
+	)
 	return files, nil
+}
+
+// trace emits a structured log line carrying the per-request correlation id
+// when one is present in the context. localgit does not own a logger because
+// store is constructed without one; the only context available is the
+// request context, so the line is a no-op when there is no request id. The
+// point of these traces is to surface in prod logs (which include request_id)
+// when a per-request log line names a slow localgit call.
+func (r sourceRepo) trace(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr) {
+	id := reqid.From(ctx)
+	if id == "" {
+		return
+	}
+	base := []slog.Attr{slog.String("request_id", id)}
+	slog.Default().LogAttrs(ctx, level, msg, append(base, attrs...)...)
+}
+
+func fileBytes(files []content.File) int {
+	n := 0
+	for _, f := range files {
+		n += len(f.Data)
+	}
+	return n
 }
 
 func getRepoSwitchedCommit(dirName, commit string) (string, string, error) {

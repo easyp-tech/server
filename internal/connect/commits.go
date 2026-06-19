@@ -12,6 +12,7 @@ import (
 	"log/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
+	"github.com/easyp-tech/server/internal/reqid"
 	"github.com/easyp-tech/server/internal/shake256"
 	"google.golang.org/protobuf/encoding/protowire"
 )
@@ -32,6 +33,23 @@ type commitServiceHandler struct {
 	filesMap  map[string][]content.File  // commitID → cached files
 }
 
+// hlog returns a logger that carries the per-request correlation id so
+// handler decision-trace lines join up with the access log.
+func (h *commitServiceHandler) hlog(r *http.Request) *slog.Logger {
+	if id := reqid.From(r.Context()); id != "" {
+		return h.api.log.With(slog.String("request_id", id))
+	}
+	return h.api.log
+}
+
+// protocolLabel returns the buf API protocol name implied by a request path.
+func protocolLabel(isV1 bool) string {
+	if isV1 {
+		return "v1"
+	}
+	return "v1beta1"
+}
+
 func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.logHandlerError(r, w, "method not allowed", http.StatusMethodNotAllowed)
@@ -45,6 +63,14 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 
 	refs := parseResourceRefs(body)
+	isV1 := !strings.Contains(r.URL.Path, "v1beta1")
+	h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+		slog.String("handler", "ServeHTTP"),
+		slog.String("procedure", "CommitService/GetCommits"),
+		slog.String("protocol", protocolLabel(isV1)),
+		slog.Int("refs", len(refs)),
+		slog.Int("body_bytes", len(body)),
+	)
 	if len(refs) == 0 {
 		h.badRequest(r, w, "no resource refs", slog.Int("body_bytes", len(body)))
 		return
@@ -58,6 +84,13 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	commits := make([]commitInfo, 0, len(refs))
 	for _, ref := range refs {
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeHTTP"),
+			slog.String("procedure", "CommitService/GetCommits"),
+			slog.String("branch", "resolve_meta"),
+			slog.String("owner", ref.owner),
+			slog.String("module", ref.module),
+		)
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
@@ -66,7 +99,16 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		cid := deterministicID(meta.Commit)
-		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeHTTP"),
+			slog.String("procedure", "CommitService/GetCommits"),
+			slog.String("branch", "compute_digest"),
+			slog.String("owner", ref.owner),
+			slog.String("module", ref.module),
+			slog.String("commit", meta.Commit),
+			slog.String("commit_id", cid),
+			slog.Bool("is_v1", isV1),
+		)
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
@@ -82,6 +124,21 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 					slog.String("upstream_error", err.Error()))
 				return
 			}
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeHTTP"),
+				slog.String("procedure", "CommitService/GetCommits"),
+				slog.String("branch", "digest_b5_wrap"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+			)
+		} else {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeHTTP"),
+				slog.String("procedure", "CommitService/GetCommits"),
+				slog.String("branch", "digest_b4_keep"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+			)
 		}
 		commits = append(commits, commitInfo{
 			ownerID:  deterministicID(ref.owner),
@@ -151,6 +208,14 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 	} else {
 		refs = parseGetGraphResourceRefs(body)
 	}
+	h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+		slog.String("handler", "ServeGraph"),
+		slog.String("procedure", "GraphService/GetGraph"),
+		slog.String("protocol", protocolLabel(isV1)),
+		slog.Int("refs", len(refs)),
+		slog.Int("body_bytes", len(body)),
+		slog.String("branch", "request_parsed"),
+	)
 	if len(refs) == 0 {
 		// Return empty graph
 		w.Header().Set("Content-Type", "application/proto")
@@ -173,6 +238,14 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		cached, ok := h.infoCache[key]
 		h.commitMu.RUnlock()
 		if ok {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeGraph"),
+				slog.String("procedure", "GraphService/GetGraph"),
+				slog.String("branch", "info_cache_hit"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+				slog.String("commit_id", cached.commitID),
+			)
 			commits = append(commits, commitInfo{
 				ownerID:  cached.ownerID,
 				moduleID: cached.moduleID,
@@ -183,6 +256,13 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 			})
 			continue
 		}
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeGraph"),
+			slog.String("procedure", "GraphService/GetGraph"),
+			slog.String("branch", "info_cache_miss"),
+			slog.String("owner", ref.owner),
+			slog.String("module", ref.module),
+		)
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
@@ -206,6 +286,21 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 					slog.String("upstream_error", err.Error()))
 				return
 			}
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeGraph"),
+				slog.String("procedure", "GraphService/GetGraph"),
+				slog.String("branch", "digest_b5_wrap"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+			)
+		} else {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeGraph"),
+				slog.String("procedure", "GraphService/GetGraph"),
+				slog.String("branch", "digest_b4_keep"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+			)
 		}
 		commits = append(commits, commitInfo{
 			ownerID:  deterministicID(ref.owner),
@@ -278,6 +373,14 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		}
 		h.commitMu.RUnlock()
 	}
+	h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+		slog.String("handler", "ServeDownload"),
+		slog.String("procedure", "DownloadService/Download"),
+		slog.String("branch", "commit_id_lookup"),
+		slog.String("commit_id", commitID),
+		slog.Bool("ref_found", ref != nil),
+		slog.Int("body_bytes", len(body)),
+	)
 	if ref == nil {
 		// The DownloadService wire format is just a commit id produced by a prior
 		// GetCommits call. If we have never seen that id, the caller skipped the
@@ -295,13 +398,38 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	cachedFiles := h.filesMap[cached.commitID]
 	h.commitMu.RUnlock()
 
+	h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+		slog.String("handler", "ServeDownload"),
+		slog.String("procedure", "DownloadService/Download"),
+		slog.String("branch", "files_cache_lookup"),
+		slog.String("owner", ref.owner),
+		slog.String("module", ref.module),
+		slog.Bool("info_cache_hit", infoOK),
+		slog.Int("cached_files", len(cachedFiles)),
+	)
+
 	var files []content.File
 	var digest []byte
 	if infoOK && len(cachedFiles) > 0 {
 		cid = cached.commitID
 		files = cachedFiles
 		digest = cached.digest
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeDownload"),
+			slog.String("procedure", "DownloadService/Download"),
+			slog.String("branch", "files_cache_hit"),
+			slog.String("owner", ref.owner),
+			slog.String("module", ref.module),
+			slog.Int("files", len(files)),
+		)
 	} else {
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeDownload"),
+			slog.String("procedure", "DownloadService/Download"),
+			slog.String("branch", "files_cache_miss"),
+			slog.String("owner", ref.owner),
+			slog.String("module", ref.module),
+		)
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
@@ -318,8 +446,24 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		}
 		cid = deterministicID(meta.Commit)
 		digest, _ = h.computeB4DigestFromFiles(files)
-		if !strings.Contains(r.URL.Path, "v1beta1") {
+		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
+		if isV1 {
 			digest, _ = toB5Digest(digest)
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeDownload"),
+				slog.String("procedure", "DownloadService/Download"),
+				slog.String("branch", "digest_b5_wrap"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+			)
+		} else {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeDownload"),
+				slog.String("procedure", "DownloadService/Download"),
+				slog.String("branch", "digest_b4_keep"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+			)
 		}
 	}
 
