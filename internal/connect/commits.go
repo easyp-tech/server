@@ -2,16 +2,19 @@ package connect
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"log/slog"
 
 	"github.com/easyp-tech/server/internal/providers/content"
+	"github.com/easyp-tech/server/internal/providers/source"
 	"github.com/easyp-tech/server/internal/reqid"
 	"github.com/easyp-tech/server/internal/shake256"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -42,6 +45,20 @@ type commitServiceHandler struct {
 	// ModuleService/GetModules foreign-module-id fallback; nil otherwise
 	// so the fallback never guesses across multiple modules.
 	singleModule *moduleRef
+
+	// prewarmOnce guards prewarmHeads against double-execution.
+	prewarmOnce sync.Once
+	// missCache holds the time a commit_id was last confirmed absent from
+	// every configured source (probe all-fail). Used by probeCommitID to
+	// skip repeated upstream fan-out for known-bogus shas within ProbeTTL.
+	missCache map[string]time.Time
+
+	// runtime knobs (set in connect.New from config.Connect.WithDefaults)
+	prewarmEnabled   bool
+	prewarmTimeout   time.Duration
+	probeEnabled     bool
+	probeNegativeTTL time.Duration
+	probeTimeout     time.Duration
 }
 
 // hlog returns a logger that carries the per-request correlation id so
@@ -504,6 +521,35 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 			)
 		}
 	}
+	if ref == nil && h.probeEnabled {
+		// Last resort: ask each configured source whether it owns this sha.
+		// Recovers any real commit the proxy never resolved this session
+		// (multi-module deployments where the single-module fallback cannot
+		// disambiguate). A git sha is unique to one repo, so there is no
+		// cross-module ambiguity. Negative-cached on all-fail.
+		probed, ok := h.probeCommitID(r.Context(), commitID)
+		if ok && probed != nil {
+			ref = probed
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeDownload"),
+				slog.String("procedure", "DownloadService/Download"),
+				slog.String("branch", "commit_id_probe_hit"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+				slog.String("repo", ref.module),
+				slog.String("commit", commitID),
+				slog.String("commit_id", commitID),
+			)
+		} else {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeDownload"),
+				slog.String("procedure", "DownloadService/Download"),
+				slog.String("branch", "commit_id_probe_miss"),
+				slog.String("commit_id", commitID),
+				slog.Bool("negative_cached", h.missCached(commitID)),
+			)
+		}
+	}
 	if ref == nil {
 		// Truly unresolvable: no commitMap hit and no module identity we can
 		// fall back to. Surface that explicitly, including the id itself so
@@ -786,6 +832,164 @@ func (h *commitServiceHandler) resolveForeignCommitID(commitID string) *moduleRe
 		return &ref
 	}
 	return nil
+}
+
+// registerResolved records a resolved module for a commit id (the canonical
+// git sha) under commitMu. commitMap[sha]=ref lets future Downloads of the
+// same sha hit directly. infoCache is populated with a digest-less entry —
+// ServeDownload's miss-branch recomputes files+digest on first use, so the
+// digest field is not load-bearing here.
+func (h *commitServiceHandler) registerResolved(sha, owner, module string) {
+	key := owner + "/" + module
+	h.commitMu.Lock()
+	h.commitMap[sha] = moduleRef{owner: owner, module: module}
+	h.infoCache[key] = commitInfoCache{
+		commitID: sha,
+		commit:   sha,
+		ownerID:  owner,
+		moduleID: key,
+	}
+	h.commitMu.Unlock()
+}
+
+// prewarmHeads resolves the current HEAD commit of every configured module
+// and registers it, so that a client sending a cached current-HEAD sha hits
+// the commit map without a prior in-session GetCommits. Best-effort and
+// idempotent (prewarmOnce): failures are logged and skipped; a later
+// probeCommitID call still recovers any sha pre-warm missed. GetMeta-only —
+// no file fetch. Intended to run in a background goroutine launched from
+// connect.New.
+func (h *commitServiceHandler) prewarmHeads() {
+	h.prewarmOnce.Do(func() {
+		sources := h.api.repo.Repositories()
+		log := h.api.log.With(slog.String("component", "prewarm"))
+		log.LogAttrs(context.Background(), slog.LevelInfo, "prewarm starting",
+			slog.Int("sources", len(sources)),
+			slog.Duration("per_call_timeout", h.prewarmTimeout))
+		var ok, fail int
+		for _, s := range sources {
+			owner, module := s.Owner(), s.RepoName()
+			if owner == "" || module == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), h.prewarmTimeout)
+			meta, err := s.GetMeta(ctx, "") // empty commit = HEAD
+			cancel()
+			if err != nil || meta.Commit == "" {
+				fail++
+				log.LogAttrs(context.Background(), slog.LevelWarn, "prewarm source miss",
+					slog.String("owner", owner), slog.String("module", module),
+					slog.String("repo", module))
+				continue
+			}
+			h.registerResolved(meta.Commit, owner, module)
+			ok++
+			log.LogAttrs(context.Background(), slog.LevelInfo, "prewarm source resolved",
+				slog.String("owner", owner), slog.String("module", module),
+				slog.String("repo", module), slog.String("commit", meta.Commit))
+		}
+		log.LogAttrs(context.Background(), slog.LevelInfo, "prewarm complete",
+			slog.Int("resolved", ok), slog.Int("failed", fail))
+	})
+}
+
+// missCached reports whether sha was recently confirmed absent from every
+// configured source (within ProbeNegativeTTL). Caller must NOT hold commitMu.
+func (h *commitServiceHandler) missCached(sha string) bool {
+	h.commitMu.RLock()
+	t, ok := h.missCache[sha]
+	h.commitMu.RUnlock()
+	return ok && time.Since(t) < h.probeNegativeTTL
+}
+
+func (h *commitServiceHandler) rememberMiss(sha string) {
+	h.commitMu.Lock()
+	h.missCache[sha] = time.Now()
+	h.commitMu.Unlock()
+}
+
+// sweepMisses periodically drops expired negative-cache entries so missCache
+// cannot grow without bound as distinct bogus shas arrive. Intended to run in
+// a background goroutine; the interval is half the TTL (Nyquist-ish). Stops
+// only when the process exits (no graceful-shutdown context exists).
+func (h *commitServiceHandler) sweepMisses(ctx context.Context) {
+	interval := h.probeNegativeTTL / 2
+	if interval <= 0 {
+		return
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			cutoff := now
+			h.commitMu.Lock()
+			for sha, t := range h.missCache {
+				if cutoff.Sub(t) >= h.probeNegativeTTL {
+					delete(h.missCache, sha)
+				}
+			}
+			h.commitMu.Unlock()
+		}
+	}
+}
+
+// probeCommitID resolves a Download commit_id (= git sha) that was neither
+// minted in-session nor recoverable by the single-module fallback, by asking
+// each configured source whether it owns the sha. A git sha is unique to one
+// repo, so at most one source succeeds — no cross-module ambiguity. On hit the
+// sha is registered as an alias (future identical requests hit directly); on
+// all-fail the sha is negative-cached (rememberMiss) so retries within TTL do
+// not re-probe. Returns (ref, true) on a hit.
+//
+// Callers must NOT hold commitMu. ctx should be the request context so a
+// disconnecting client bounds the fan-out; each per-source call additionally
+// gets its own timeout (probeTimeout).
+func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*moduleRef, bool) {
+	if sha == "" || h.missCached(sha) {
+		return nil, false
+	}
+	sources := h.api.repo.Repositories()
+	if len(sources) == 0 {
+		return nil, false
+	}
+
+	type probeResult struct {
+		ref moduleRef
+		ok  bool
+	}
+	// Buffered enough to never block a successful goroutine; first success wins.
+	results := make(chan probeResult, len(sources))
+	var wg sync.WaitGroup
+	for _, s := range sources {
+		wg.Add(1)
+		go func(s source.Source) {
+			defer wg.Done()
+			pctx, cancel := context.WithTimeout(ctx, h.probeTimeout)
+			defer cancel()
+			meta, err := s.GetMeta(pctx, sha)
+			if err != nil || meta.Commit == "" {
+				return
+			}
+			results <- probeResult{
+				ref: moduleRef{owner: s.Owner(), module: s.RepoName()},
+				ok:  true,
+			}
+		}(s)
+	}
+	wg.Wait()
+	close(results)
+
+	for r := range results {
+		// First (only) success. Register alias and return.
+		h.registerResolved(sha, r.ref.owner, r.ref.module)
+		ref := r.ref
+		return &ref, true
+	}
+	h.rememberMiss(sha)
+	return nil, false
 }
 
 // splitOwnerModule splits an infoCache key of the form "owner/module" back

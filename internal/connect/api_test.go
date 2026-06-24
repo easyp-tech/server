@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	registry "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
@@ -49,14 +52,34 @@ func (m *mockProvider) Repositories() []source.Source {
 // OwnerService tests. It only implements the methods needed for
 // buildKnownOwners (Owner, RepoName) plus the Source interface contract
 // that the rest of the package relies on.
+//
+// For pre-warm/probe tests, GetMeta is sha-aware: it owns exactly one commit
+// (commit). A HEAD probe (commit arg "") resolves to it; any other commit arg
+// is reported as not-owned (error). getMetaCalls counts calls so tests can
+// assert the negative cache suppresses repeat probes.
 type mockSource struct {
 	owner    string
 	repoName string
 	typ      string
+	commit   string
+
+	getMetaCalls *atomic.Int32
+	getMetaErr   error // when set, GetMeta always returns this error
 }
 
-func (s *mockSource) GetMeta(_ context.Context, _ string) (content.Meta, error) {
-	return content.Meta{}, nil
+func (s *mockSource) GetMeta(_ context.Context, commit string) (content.Meta, error) {
+	if s.getMetaCalls != nil {
+		s.getMetaCalls.Add(1)
+	}
+	if s.getMetaErr != nil {
+		return content.Meta{}, s.getMetaErr
+	}
+	// HEAD (empty arg) resolves to the source's own commit; a specific commit
+	// resolves only if it is the one this source owns.
+	if commit != "" && commit != s.commit {
+		return content.Meta{}, fmt.Errorf("mock: commit %q not found in %s/%s", commit, s.owner, s.repoName)
+	}
+	return content.Meta{Commit: s.commit, DefaultBranch: "main"}, nil
 }
 
 func (s *mockSource) GetFiles(_ context.Context, _ string) ([]content.File, error) {
@@ -1283,5 +1306,112 @@ func TestOwnerServiceV1MethodNotAllowed(t *testing.T) {
 
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
+	}
+}
+
+// newTestCommitHandler builds a commitServiceHandler wired to a provider with
+// minimal state, for direct unit testing of prewarmHeads / probeCommitID
+// without the HTTP layer. Enhancements are off by default; tests flip the
+// knobs they exercise.
+func newTestCommitHandler(repo provider) *commitServiceHandler {
+	return &commitServiceHandler{ //nolint:exhaustruct
+		api: &api{ //nolint:exhaustruct
+			log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			repo: repo,
+		},
+		commitMap:       make(map[string]moduleRef),
+		infoCache:       make(map[string]commitInfoCache),
+		filesMap:        make(map[string][]content.File),
+		missCache:       make(map[string]time.Time),
+		prewarmTimeout:  time.Second,
+		probeTimeout:    time.Second,
+		probeNegativeTTL: time.Minute,
+	}
+}
+
+// TestPrewarmHeads_PopulatesCommitMap verifies the startup sweep resolves the
+// HEAD commit of each configured source and registers it so a later Download
+// of that sha hits without a prior in-session GetCommits.
+func TestPrewarmHeads_PopulatesCommitMap(t *testing.T) {
+	repo := &mockProvider{repos: []source.Source{
+		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "aaa111"},
+		&mockSource{owner: "cyp", repoName: "cyp-logger", commit: "bbb222"},
+	}}
+	h := newTestCommitHandler(repo)
+	h.prewarmEnabled = true
+
+	h.prewarmHeads() // synchronous (sync.Once guards the goroutine-launched path)
+
+	h.commitMu.RLock()
+	ref, ok := h.commitMap["aaa111"]
+	h.commitMu.RUnlock()
+	if !ok || ref.owner != "googleapis" || ref.module != "googleapis" {
+		t.Fatalf("aaa111 not resolved to googleapis/googleapis; ok=%v ref=%+v", ok, ref)
+	}
+	h.commitMu.RLock()
+	_, ok = h.commitMap["bbb222"]
+	h.commitMu.RUnlock()
+	if !ok {
+		t.Fatal("bbb222 (cyp/cyp-logger HEAD) not pre-warmed")
+	}
+
+	// Idempotent: a second run must not panic or duplicate work.
+	h.prewarmHeads()
+}
+
+// TestProbeCommitID_HitResolvesAndCaches verifies that a sha owned by exactly
+// one source is resolved by the probe and registered as an alias so later
+// requests for it hit the commit map directly.
+func TestProbeCommitID_HitResolvesAndCaches(t *testing.T) {
+	var calls atomic.Int32
+	repo := &mockProvider{repos: []source.Source{
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "deadbeef", getMetaCalls: &calls},
+		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "cafef00d", getMetaCalls: &calls},
+	}}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+
+	ref, ok := h.probeCommitID(context.Background(), "deadbeef")
+	if !ok || ref == nil || ref.owner != "cyp" || ref.module != "cyp-apis" {
+		t.Fatalf("probe should resolve deadbeef -> cyp/cyp-apis; ok=%v ref=%+v", ok, ref)
+	}
+
+	h.commitMu.RLock()
+	_, present := h.commitMap["deadbeef"]
+	h.commitMu.RUnlock()
+	if !present {
+		t.Error("probe hit did not register deadbeef as a commitMap alias")
+	}
+}
+
+// TestProbeCommitID_MissNegativeCaches verifies a bogus sha is reported as a
+// miss, recorded in the negative cache, and that a retry within TTL does NOT
+// re-probe (no extra upstream GetMeta calls).
+func TestProbeCommitID_MissNegativeCaches(t *testing.T) {
+	var calls atomic.Int32
+	repo := &mockProvider{repos: []source.Source{
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "real", getMetaCalls: &calls},
+	}}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+
+	ref, ok := h.probeCommitID(context.Background(), "bogus000")
+	if ok || ref != nil {
+		t.Fatalf("bogus sha should miss; got ok=%v ref=%+v", ok, ref)
+	}
+	if first := calls.Load(); first != 1 {
+		t.Fatalf("probe should issue exactly 1 GetMeta call on miss, got %d", first)
+	}
+	if !h.missCached("bogus000") {
+		t.Fatal("bogus sha not negative-cached after miss")
+	}
+
+	// Second call within TTL: must be served from the negative cache.
+	ref2, ok2 := h.probeCommitID(context.Background(), "bogus000")
+	if ok2 || ref2 != nil {
+		t.Fatalf("negative-cached sha should still miss; got ok=%v ref=%+v", ok2, ref2)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("negative-cache hit must not re-probe; GetMeta calls = %d, want 1", got)
 	}
 }

@@ -3,6 +3,7 @@ package connect
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"log/slog"
 
@@ -19,6 +20,21 @@ type provider interface {
 	Repositories() []source.Source
 }
 
+// CommitResolution configures the buf v1 commit-id resolution enhancements in
+// commitServiceHandler: startup HEAD pre-warm and the upstream sha probe used
+// on a Download cache miss. It is the connect-package mirror of the user-facing
+// connect config — kept here (not imported from cmd/easyp/internal/config) to
+// avoid an internal→cmd layering violation. A zero value disables both
+// enhancements (the historical behavior), so callers that construct the mux
+// via New (tests) are unaffected; production threads it via NewWithConfig.
+type CommitResolution struct {
+	PrewarmEnabled   bool
+	PrewarmTimeout   time.Duration
+	ProbeEnabled     bool
+	ProbeNegativeTTL time.Duration
+	ProbeTimeout     time.Duration
+}
+
 type api struct {
 	log *slog.Logger
 	v1alpha1connect.UnimplementedRepositoryServiceHandler
@@ -33,11 +49,25 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Hello! This is Buf Proxy Service and this is its Health Check!"))
 }
 
-// New creates and returns gRPC server.
+// New creates and returns gRPC server. Commit-resolution enhancements (pre-warm,
+// sha probe) are disabled; production should use NewWithConfig to enable them.
 func New(
 	log *slog.Logger,
 	core provider,
 	domain string,
+	opts ...connect.HandlerOption,
+) *http.ServeMux {
+	return NewWithConfig(log, core, domain, CommitResolution{}, opts...)
+}
+
+// NewWithConfig is like New but enables commit-resolution enhancements per cfg.
+// PrewarmEnabled launches a best-effort background HEAD sweep; ProbeEnabled
+// turns on the upstream sha probe for Download cache misses.
+func NewWithConfig(
+	log *slog.Logger,
+	core provider,
+	domain string,
+	cfg CommitResolution,
 	opts ...connect.HandlerOption,
 ) *http.ServeMux {
 	a := &api{ //nolint:exhaustruct
@@ -63,11 +93,25 @@ func New(
 	knownOwners := buildKnownOwners(core.Repositories())
 	singleModule := buildKnownModules(core.Repositories())
 	commitHandler := &commitServiceHandler{
-		api: a, commitMap: make(map[string]moduleRef),
-		infoCache:   make(map[string]commitInfoCache),
-		filesMap:    make(map[string][]content.File),
-		knownOwners: knownOwners,
+		api:          a,
+		commitMap:    make(map[string]moduleRef),
+		infoCache:    make(map[string]commitInfoCache),
+		filesMap:     make(map[string][]content.File),
+		knownOwners:  knownOwners,
 		singleModule: singleModule,
+		missCache:    make(map[string]time.Time),
+
+		prewarmEnabled:   cfg.PrewarmEnabled,
+		prewarmTimeout:   cfg.PrewarmTimeout,
+		probeEnabled:     cfg.ProbeEnabled,
+		probeNegativeTTL: cfg.ProbeNegativeTTL,
+		probeTimeout:     cfg.ProbeTimeout,
+	}
+	if commitHandler.prewarmEnabled && commitHandler.prewarmTimeout > 0 {
+		go commitHandler.prewarmHeads()
+	}
+	if commitHandler.probeEnabled && commitHandler.probeNegativeTTL > 0 {
+		go commitHandler.sweepMisses(context.Background())
 	}
 	mux.HandleFunc("/buf.registry.module.v1.CommitService/", commitHandler.ServeHTTP)
 	mux.HandleFunc("/buf.registry.module.v1beta1.CommitService/", commitHandler.ServeHTTP)
