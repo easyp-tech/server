@@ -10,11 +10,13 @@ import (
 
 	v1alpha1connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"
+	"github.com/easyp-tech/server/internal/providers/source"
 )
 
 type provider interface {
 	GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error)
 	GetFiles(ctx context.Context, owner, repoName, commit string) ([]content.File, error)
+	Repositories() []source.Source
 }
 
 type api struct {
@@ -53,10 +55,17 @@ func New(
 	// CommitService/GraphService/DownloadService handlers for buf CLI v1.69.0+.
 	// Both v1 and v1beta1 paths are registered because buf CLI uses v1beta1
 	// paths with v1 buf.yaml config and v1 paths with v2 buf.yaml config.
+	// OwnerService is also part of the v1 API surface that buf CLI calls
+	// during `buf dep update`; without it the request falls through to the
+	// catch-all rootHandler and the client sees a text/plain response,
+	// which the buf CLI rejects with "invalid content-type: ... expecting
+	// application/proto".
+	knownOwners := buildKnownOwners(core.Repositories())
 	commitHandler := &commitServiceHandler{
 		api: a, commitMap: make(map[string]moduleRef),
-		infoCache: make(map[string]commitInfoCache),
-		filesMap:  make(map[string][]content.File),
+		infoCache:   make(map[string]commitInfoCache),
+		filesMap:    make(map[string][]content.File),
+		knownOwners: knownOwners,
 	}
 	mux.HandleFunc("/buf.registry.module.v1.CommitService/", commitHandler.ServeHTTP)
 	mux.HandleFunc("/buf.registry.module.v1beta1.CommitService/", commitHandler.ServeHTTP)
@@ -66,6 +75,7 @@ func New(
 	mux.HandleFunc("/buf.registry.module.v1beta1.DownloadService/", commitHandler.ServeDownload)
 	mux.HandleFunc("/buf.registry.module.v1.ModuleService/", commitHandler.ServeGetModules)
 	mux.HandleFunc("/buf.registry.module.v1beta1.ModuleService/", commitHandler.ServeGetModules)
+	mux.HandleFunc("/buf.registry.owner.v1.OwnerService/", commitHandler.ServeGetOwners)
 
 	mux.HandleFunc("/", rootHandler)
 

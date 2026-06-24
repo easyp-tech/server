@@ -15,6 +15,7 @@ import (
 	registry "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
 	v1alpha1connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"
+	"github.com/easyp-tech/server/internal/providers/source"
 	"github.com/easyp-tech/server/internal/shake256"
 	"google.golang.org/protobuf/encoding/protowire"
 )
@@ -26,9 +27,10 @@ var errUpstream = errors.New("upstream is down")
 
 // mockProvider implements provider for testing.
 type mockProvider struct {
-	meta  content.Meta
-	files []content.File
-	err   error
+	meta    content.Meta
+	files   []content.File
+	err     error
+	repos   []source.Source
 }
 
 func (m *mockProvider) GetMeta(_ context.Context, _, _, _ string) (content.Meta, error) {
@@ -37,6 +39,43 @@ func (m *mockProvider) GetMeta(_ context.Context, _, _, _ string) (content.Meta,
 
 func (m *mockProvider) GetFiles(_ context.Context, _, _, _ string) ([]content.File, error) {
 	return m.files, m.err
+}
+
+func (m *mockProvider) Repositories() []source.Source {
+	return m.repos
+}
+
+// mockSource is a source.Source that returns canned metadata for
+// OwnerService tests. It only implements the methods needed for
+// buildKnownOwners (Owner, RepoName) plus the Source interface contract
+// that the rest of the package relies on.
+type mockSource struct {
+	owner    string
+	repoName string
+	typ      string
+}
+
+func (s *mockSource) GetMeta(_ context.Context, _ string) (content.Meta, error) {
+	return content.Meta{}, nil
+}
+
+func (s *mockSource) GetFiles(_ context.Context, _ string) ([]content.File, error) {
+	return nil, nil
+}
+
+func (s *mockSource) ConfigHash() string { return "mock" }
+
+func (s *mockSource) Name() string { return s.repoName }
+
+func (s *mockSource) Owner() string { return s.owner }
+
+func (s *mockSource) RepoName() string { return s.repoName }
+
+func (s *mockSource) Type() string {
+	if s.typ == "" {
+		return "mock"
+	}
+	return s.typ
 }
 
 func testMux(p provider) *http.ServeMux {
@@ -659,4 +698,288 @@ func TestHandlerError_UpstreamError_UsesModuleKey(t *testing.T) {
 	// for the user-facing per-request line. The canonical key for the
 	// module-level lookup is still `module` (verified by the assertions above);
 	// `repo` is supplementary.
+}
+
+// --- OwnerService tests ---
+
+// buildGetOwnersRequestByID builds a GetOwnersRequest containing one
+// OwnerRef with the given id (the buf-style deterministic id form).
+func buildGetOwnersRequestByID(id string) []byte {
+	// OwnerRef: id = field 1, string
+	var ref []byte
+	ref = protowire.AppendTag(ref, 1, protowire.BytesType)
+	ref = protowire.AppendString(ref, id)
+	// GetOwnersRequest: owner_refs = field 1, repeated message
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType)
+	req = append(req, protowire.AppendVarint(nil, uint64(len(ref)))...)
+	req = append(req, ref...)
+	return req
+}
+
+// buildGetOwnersRequestByName builds a GetOwnersRequest containing one
+// OwnerRef with the given name (the owner name form like "googleapis").
+func buildGetOwnersRequestByName(name string) []byte {
+	// OwnerRef: name = field 2, string
+	var ref []byte
+	ref = protowire.AppendTag(ref, 2, protowire.BytesType)
+	ref = protowire.AppendString(ref, name)
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType)
+	req = append(req, protowire.AppendVarint(nil, uint64(len(ref)))...)
+	req = append(req, ref...)
+	return req
+}
+
+// extractOwnerNameFromResponse walks a GetOwnersResponse body and
+// returns the Organization.name of the first owner, or "" if no owners
+// are present.
+//
+// GetOwnersResponse: repeated Owner owners = 1
+// Owner: oneof { Organization organization = 2 }
+// Organization: id=1, name=4
+func extractOwnerNameFromResponse(body []byte) string {
+	for len(body) > 0 {
+		num, typ, n := protowire.ConsumeTag(body)
+		if n < 0 {
+			return ""
+		}
+		body = body[n:]
+		if num == 1 && typ == protowire.BytesType {
+			owner, mLen := protowire.ConsumeBytes(body)
+			body = body[mLen:]
+			// owner is Owner: skip into the Organization submessage (field 2)
+			for len(owner) > 0 {
+				oNum, oTyp, oN := protowire.ConsumeTag(owner)
+				if oN < 0 {
+					return ""
+				}
+				owner = owner[oN:]
+				if oNum == 2 && oTyp == protowire.BytesType {
+					org, _ := protowire.ConsumeBytes(owner)
+					// Organization: id=1, name=4
+					for len(org) > 0 {
+						fNum, fTyp, fN := protowire.ConsumeTag(org)
+						if fN < 0 {
+							return ""
+						}
+						org = org[fN:]
+						if fNum == 4 && fTyp == protowire.BytesType {
+							name, _ := protowire.ConsumeBytes(org)
+							return string(name)
+						}
+						fN = protowire.ConsumeFieldValue(fNum, fTyp, org)
+						if fN < 0 {
+							return ""
+						}
+						org = org[fN:]
+					}
+				} else {
+					oN = protowire.ConsumeFieldValue(oNum, oTyp, owner)
+					if oN < 0 {
+						return ""
+					}
+					owner = owner[oN:]
+				}
+			}
+		} else {
+			n = protowire.ConsumeFieldValue(num, typ, body)
+			if n < 0 {
+				return ""
+			}
+			body = body[n:]
+		}
+	}
+	return ""
+}
+
+// TestOwnerServiceV1RouteRegistered pins the bug fix: a POST to the v1
+// OwnerService path must NOT fall through to the text/plain rootHandler.
+// Returns 200 application/proto (or 400 if the request body is empty),
+// never 200 with text/plain content-type.
+func TestOwnerServiceV1RouteRegistered(t *testing.T) {
+	p := &mockProvider{}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Post(
+		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
+		"application/proto",
+		bytes.NewReader(nil),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	ct := resp.Header.Get("Content-Type")
+	if resp.StatusCode == http.StatusOK && ct == "text/plain; charset=utf-8" {
+		t.Errorf("path /buf.registry.owner.v1.OwnerService/ not registered — fell through to rootHandler (200 text/plain)")
+	}
+}
+
+// TestOwnerServiceV1ReturnsProtobuf pins the fix at the protocol level:
+// when a known owner is requested, the response must be application/proto
+// with a non-empty body containing the owner name. This is the exact
+// path that was failing in prod with the text/plain content-type error.
+func TestOwnerServiceV1ReturnsProtobuf(t *testing.T) {
+	p := &mockProvider{
+		repos: []source.Source{
+			&mockSource{owner: "googleapis", repoName: "googleapis", typ: "github"},
+		},
+	}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildGetOwnersRequestByID(deterministicID("googleapis"))
+	resp, err := http.Post(
+		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "application/proto" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/proto")
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s", resp.StatusCode, respBody)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if len(respBody) == 0 {
+		t.Fatal("empty response body")
+	}
+	if got := extractOwnerNameFromResponse(respBody); got != "googleapis" {
+		t.Errorf("owner name = %q, want %q; body: %x", got, "googleapis", respBody)
+	}
+}
+
+// TestOwnerServiceV1ByName verifies the handler accepts an OwnerRef with
+// a name (the form the buf CLI uses when it knows the owner name but not
+// the cached id, e.g. on a fresh machine).
+func TestOwnerServiceV1ByName(t *testing.T) {
+	p := &mockProvider{
+		repos: []source.Source{
+			&mockSource{owner: "googleapis", repoName: "googleapis"},
+		},
+	}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildGetOwnersRequestByName("googleapis")
+	resp, err := http.Post(
+		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s", resp.StatusCode, respBody)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/proto" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/proto")
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if got := extractOwnerNameFromResponse(respBody); got != "googleapis" {
+		t.Errorf("owner name = %q, want %q; body: %x", got, "googleapis", respBody)
+	}
+}
+
+// TestOwnerServiceV1UnknownOwner pins the "we don't fabricate owners we
+// don't serve" rule: an owner that is not in the configured repository
+// set must NOT be returned, even if its id matches the buf-style format.
+// This protects against the proxy accidentally answering for owners it
+// has no information about.
+func TestOwnerServiceV1UnknownOwner(t *testing.T) {
+	p := &mockProvider{
+		repos: []source.Source{
+			&mockSource{owner: "googleapis", repoName: "googleapis"},
+		},
+	}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Build a request for an owner the proxy does NOT serve.
+	body := buildGetOwnersRequestByID(deterministicID("not-a-real-owner"))
+	resp, err := http.Post(
+		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (empty body is correct for unknown owner)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/proto" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/proto")
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if got := extractOwnerNameFromResponse(respBody); got != "" {
+		t.Errorf("owner name = %q, want empty (unknown owner must not be returned); body: %x", got, respBody)
+	}
+}
+
+// TestOwnerServiceV1EmptyBody pins the 400 path: an empty body has no
+// owner refs to look up, so the handler must return 400, not 200. The
+// 400 body uses Go's standard http.Error text/plain (this is the same
+// pattern used by every other bad-request path in this package).
+func TestOwnerServiceV1EmptyBody(t *testing.T) {
+	p := &mockProvider{}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Post(
+		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
+		"application/proto",
+		bytes.NewReader(nil),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (empty body has no owner refs)", resp.StatusCode)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("no owner refs")) {
+		t.Errorf("body %q does not mention 'no owner refs'", respBody)
+	}
+}
+
+// TestOwnerServiceV1MethodNotAllowed pins the 405 path: GET is rejected
+// at the handler entry, never reaching the rootHandler.
+func TestOwnerServiceV1MethodNotAllowed(t *testing.T) {
+	p := &mockProvider{}
+	mux := testMux(p)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/buf.registry.owner.v1.OwnerService/GetOwners")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
+	}
 }
