@@ -500,12 +500,18 @@ func extractCommitID(msg []byte) string {
 
 // --- Error classification tests ---
 
-// TestBadRequest_OnUnknownCommitID pins the stateful "commit id not seen"
-// behavior of DownloadService/Download. The Download handler requires the
-// caller to have already called CommitService/GetCommits (which populates
-// the commitMap). An unknown id is a client protocol error, not an upstream
-// failure — surface it as 400 with an explicit message and log the commit id
-// itself so operators can correlate with prior GetCommits traffic.
+// TestBadRequest_OnUnknownCommitID pins the "truly unresolvable module"
+// behavior of DownloadService/Download. When the proxy has no module
+// identity it can fall back to (infoCache empty — no prior GetCommits /
+// GetGraph in this session), a foreign commit_id cannot be served and must
+// surface as 400 with an explicit message and the commit id logged so
+// operators can correlate with prior GetCommits traffic.
+//
+// Note: under the foreign-commit_id fallback semantics, a request with an
+// unknown commit_id but a populated single-entry infoCache is served (see
+// TestServeDownload_ForeignCommitID_FallbackKnownModule). This test only
+// passes because no CommitService/GetCommits call is made, so infoCache is
+// empty and the fallback has nothing to resolve to.
 func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 	const wantCommitID = "000000000000000000000000deadbeef"
 
@@ -546,6 +552,199 @@ func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 				t.Errorf("log does not contain server attr\nlog: %s", logLine)
 			}
 		})
+	}
+}
+
+// TestServeDownload_ForeignCommitID_FallbackKnownModule pins the foreign
+// commit_id fallback: when a client sends a commit_id the proxy never
+// minted (e.g. cached from real buf.build in buf.lock) but the module is
+// known (a prior CommitService/GetCommits populated infoCache with exactly
+// one entry), ServeDownload must serve the content (200) rather than 400.
+//
+// This reproduces the production symptom from the download-foreign-commit-id
+// debug session: the proxy serves googleapis/googleapis, GetGraph minted a
+// proxy-local id, but the client's Download carried a cached foreign id.
+func TestServeDownload_ForeignCommitID_FallbackKnownModule(t *testing.T) {
+	const foreignCommitID = "2d1654c2cc02a6e7f3bbea2d06fc1c59"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		meta: content.Meta{
+			Commit:        "e57bae6efbd075a925978a79bb9b997beb4ecc19",
+			DefaultBranch: "main",
+		},
+		files: []content.File{
+			{Path: "google/api/http.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Warm infoCache with exactly one module via CommitService/GetCommits.
+	// We do NOT use the id it returns; instead we send a foreign id the
+	// proxy never minted.
+	commitResp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.CommitService/GetCommits",
+		"application/proto",
+		bytes.NewReader(buildGetCommitsRequest("googleapis", "googleapis")),
+	)
+	if err != nil {
+		t.Fatalf("warm-up GetCommits request failed: %v", err)
+	}
+	if commitResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(commitResp.Body)
+		commitResp.Body.Close()
+		t.Fatalf("warm-up GetCommits status = %d, want 200; body: %s", commitResp.StatusCode, b)
+	}
+	io.ReadAll(commitResp.Body)
+	commitResp.Body.Close()
+
+	for _, path := range []string{
+		"/buf.registry.module.v1.DownloadService/Download",
+		"/buf.registry.module.v1beta1.DownloadService/Download",
+	} {
+		t.Run(path, func(t *testing.T) {
+			logBuf.Reset()
+			body := buildDownloadRequest(foreignCommitID)
+			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				respBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200 (foreign id should fall back to known module); body: %s", resp.StatusCode, respBody)
+			}
+			if ct := resp.Header.Get("Content-Type"); ct != "application/proto" {
+				t.Errorf("Content-Type = %q, want %q", ct, "application/proto")
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if len(respBody) == 0 {
+				t.Fatal("empty response body")
+			}
+
+			// The foreign id was served either via the fallback branch (first
+			// time) or via the commitMap alias registered by a prior fallback
+			// (subtests share the handler, so the second subtest reuses the
+			// alias the first one registered). Either way the request must
+			// succeed; the log must reference the foreign id.
+			logLine := logBuf.String()
+			if !strings.Contains(logLine, `"commit_id":"`+foreignCommitID+`"`) {
+				t.Errorf("log does not reference foreign commit_id=%s\nlog: %s", foreignCommitID, logLine)
+			}
+			fallbackFired := strings.Contains(logLine, `"branch":"foreign_commit_id_fallback"`)
+			aliasHit := strings.Contains(logLine, `"ref_found":true`)
+			if !fallbackFired && !aliasHit {
+				t.Errorf("neither fallback nor alias path served the request\nlog: %s", logLine)
+			}
+		})
+	}
+}
+
+// TestServeDownload_ForeignCommitID_FallbackAliasCachesMapping verifies the
+// optimization where, after the first foreign-commit_id fallback succeeds,
+// the foreign id is registered as an alias in commitMap so a second request
+// for the same foreign id is served directly (without re-running the
+// fallback). We assert this indirectly: the second request must still
+// return 200, and the log must NOT contain a second
+// foreign_commit_id_fallback line — proving the alias hit took the direct
+// path.
+func TestServeDownload_ForeignCommitID_FallbackAliasCachesMapping(t *testing.T) {
+	const foreignCommitID = "2d1654c2cc02a6e7f3bbea2d06fc1c59"
+
+	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	p := &mockProvider{
+		meta: content.Meta{Commit: "e57bae6efbd075a925978a79bb9b997beb4ecc19", DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "google/api/http.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Warm infoCache with exactly one module.
+	commitResp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.CommitService/GetCommits",
+		"application/proto",
+		bytes.NewReader(buildGetCommitsRequest("googleapis", "googleapis")),
+	)
+	if err != nil {
+		t.Fatalf("warm-up GetCommits request failed: %v", err)
+	}
+	io.ReadAll(commitResp.Body)
+	commitResp.Body.Close()
+
+	body := buildDownloadRequest(foreignCommitID)
+	path := "/buf.registry.module.v1.DownloadService/Download"
+
+	// First request: fallback fires, registers alias.
+	resp1, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	if resp1.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp1.Body)
+		resp1.Body.Close()
+		t.Fatalf("first request status = %d, want 200; body: %s", resp1.StatusCode, b)
+	}
+	io.ReadAll(resp1.Body)
+	resp1.Body.Close()
+
+	// Second request for the same foreign id: alias hit, no fallback.
+	resp2, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("second request status = %d, want 200 (alias should serve); body: %s", resp2.StatusCode, b)
+	}
+}
+
+// TestServeDownload_ForeignCommitID_TrulyUnknownModule pins the safety net:
+// when commit_id is foreign AND the proxy has no resolvable module identity
+// (infoCache empty — nothing served in this session), the request must
+// still surface as 400. This preserves the original contract for the case
+// where the fallback legitimately cannot recover the module.
+func TestServeDownload_ForeignCommitID_TrulyUnknownModule(t *testing.T) {
+	const foreignCommitID = "2d1654c2cc02a6e7f3bbea2d06fc1c59"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	// No GetCommits call is made, so infoCache stays empty.
+	p := &mockProvider{
+		meta: content.Meta{Commit: "e57bae6efbd075a925978a79bb9b997beb4ecc19", DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "google/api/http.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildDownloadRequest(foreignCommitID)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.DownloadService/Download",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 400 (no resolvable module); body: %s", resp.StatusCode, respBody)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("unknown commit id")) {
+		t.Errorf("body %q does not mention 'unknown commit id'", respBody)
 	}
 }
 

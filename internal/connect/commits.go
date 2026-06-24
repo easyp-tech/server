@@ -469,9 +469,39 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	}
 	h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision", lookupAttrs...)
 	if ref == nil {
-		// The DownloadService wire format is just a commit id produced by a prior
-		// GetCommits call. If we have never seen that id, the caller skipped the
-		// warm-up step — surface that explicitly, including the id itself so
+		// Foreign / cached commit_id fallback.
+		//
+		// commitMap is keyed only by ids this proxy mints, but a buf CLI client
+		// may send a commit_id it cached from a different registry (e.g. real
+		// buf.build, pinned in buf.lock). That id will never match commitMap,
+		// yet the module the client wants is one this proxy serves. Before
+		// rejecting, try to resolve the module identity:
+		//
+		//   1. If infoCache has exactly one entry, the proxy is serving a single
+		//      active module (the common single-module deployment) — use it.
+		//   2. Otherwise we cannot tell which module a foreign id refers to;
+		//      fall through to the 400 so we never serve the wrong content.
+		//
+		// On a successful resolution, register the foreign commit_id as an alias
+		// of the resolved module's ref in commitMap so subsequent identical
+		// requests are served directly without re-running the fallback.
+		resolved := h.resolveForeignCommitID(commitID)
+		if resolved != nil {
+			ref = resolved
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeDownload"),
+				slog.String("procedure", "DownloadService/Download"),
+				slog.String("branch", "foreign_commit_id_fallback"),
+				slog.String("owner", ref.owner),
+				slog.String("module", ref.module),
+				slog.String("repo", ref.module),
+				slog.String("foreign_commit_id", commitID),
+			)
+		}
+	}
+	if ref == nil {
+		// Truly unresolvable: no commitMap hit and no module identity we can
+		// fall back to. Surface that explicitly, including the id itself so
 		// operators can correlate with prior GetCommits traffic.
 		h.badRequest(r, w, "unknown commit id: must call CommitService/GetCommits first",
 			slog.String("commit_id", commitID),
@@ -701,6 +731,68 @@ func (h *commitServiceHandler) badRequest(r *http.Request, w http.ResponseWriter
 // talking to the back-end registry/provider failed.
 func (h *commitServiceHandler) upstreamError(r *http.Request, w http.ResponseWriter, msg string, attrs ...slog.Attr) {
 	h.logHandlerError(r, w, msg, http.StatusBadGateway, attrs...)
+}
+
+// resolveForeignCommitID attempts to recover the module identity for a
+// commit_id this proxy never minted (e.g. one a buf CLI client cached from a
+// different registry). It is called by ServeDownload when commitMap lookup
+// misses, before falling back to a 400.
+//
+// Resolution strategy:
+//
+//  1. If infoCache has exactly one entry, the proxy is serving a single
+//     active module (the common single-module deployment). Use that entry.
+//  2. Otherwise we cannot tell which module a foreign id refers to without
+//     more information (ResourceRef.name is not parsed from the download
+//     wire format); return nil so the caller surfaces a 400 rather than
+//     guessing and serving the wrong module.
+//
+// On success, the foreign commit_id is registered as an alias of the
+// resolved module's ref in commitMap so subsequent identical requests are
+// served directly without re-running this fallback.
+//
+// Returns nil when the module identity cannot be recovered.
+func (h *commitServiceHandler) resolveForeignCommitID(commitID string) *moduleRef {
+	if commitID == "" {
+		return nil
+	}
+	h.commitMu.Lock()
+	defer h.commitMu.Unlock()
+	if len(h.infoCache) != 1 {
+		return nil
+	}
+	for key, info := range h.infoCache {
+		// Reject if the cached entry is for an id that does not match: this
+		// happens when the single entry itself is for a *different* foreign
+		// id we previously aliased. We trust the entry's commitID only as a
+		// resolved-id hint, not as an equality check — the whole point of the
+		// fallback is that commitID differs from info.commitID.
+		owner, module, ok := splitOwnerModule(key)
+		if !ok {
+			return nil
+		}
+		ref := moduleRef{owner: owner, module: module}
+		// Register the foreign id as an alias of this module's ref so future
+		// requests for the same foreign id skip the fallback entirely.
+		h.commitMap[commitID] = ref
+		// Keep ownerID/moduleID consistent: also alias info.commitID -> ref
+		// is already present (set when the entry was written); nothing to do.
+		_ = info
+		return &ref
+	}
+	return nil
+}
+
+// splitOwnerModule splits an infoCache key of the form "owner/module" back
+// into its parts. Returns ok=false if the key is malformed (no slash or
+// empty parts). The owner part may itself contain a slash for some deploy
+// topologies, so we split on the FIRST slash and treat the rest as module.
+func splitOwnerModule(key string) (owner, module string, ok bool) {
+	idx := strings.IndexByte(key, '/')
+	if idx <= 0 || idx == len(key)-1 {
+		return "", "", false
+	}
+	return key[:idx], key[idx+1:], true
 }
 
 // ServeGetModules handles v1/v1beta1 ModuleService/GetModules.
