@@ -106,7 +106,7 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		cid := deterministicID(meta.Commit)
+		cid := meta.Commit
 		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
 			slog.String("handler", "ServeHTTP"),
 			slog.String("procedure", "CommitService/GetCommits"),
@@ -298,7 +298,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		cid := deterministicID(meta.Commit)
+		cid := meta.Commit
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
@@ -574,7 +574,7 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		cid = deterministicID(meta.Commit)
+		cid = meta.Commit
 		digest, _ = h.computeB4DigestFromFiles(files)
 		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
 		if isV1 {
@@ -657,7 +657,7 @@ func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, c
 	if err != nil {
 		return nil, err
 	}
-	cid := deterministicID(commit)
+	cid := commit
 	h.commitMu.Lock()
 	h.filesMap[cid] = files
 	h.commitMu.Unlock()

@@ -12,10 +12,9 @@ type moduleRef struct {
 	module string
 }
 
-// deterministicID is the buf-style deterministic id for a module or commit.
-// It delegates to the shared internal/detid package so the upstream trace
-// in internal/providers/multisource can mint the same id without depending
-// on this package (which would create an import cycle).
+// deterministicID is the buf-style deterministic id for module and owner
+// resources. It delegates to the shared internal/detid package. Commit ids
+// are NOT produced here — those are the raw git commit sha.
 func deterministicID(input string) string {
 	return detid.DeterministicID(input)
 }

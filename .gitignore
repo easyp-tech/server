@@ -18,3 +18,6 @@ yadro.yaml
 
 # Cache and storage
 .storage/
+
+# Production debug log exports (ephemeral)
+logs/
