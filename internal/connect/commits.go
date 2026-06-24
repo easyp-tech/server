@@ -339,6 +339,33 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 				slog.Bool("is_v1", isV1),
 			)
 		}
+		// Write the freshly-resolved commit back into the local cache so that a
+		// subsequent DownloadService/Download call (buf 1.69.0+ v1 workflow:
+		// GetModules -> GetGraph -> Download) finds the commit_id without first
+		// requiring CommitService/GetCommits. Without this, ServeDownload's
+		// commit_id_lookup branch returns ref_found=false and replies 400
+		// "unknown commit id: must call CommitService/GetCommits first".
+		h.commitMu.Lock()
+		h.commitMap[cid] = ref
+		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
+			commitID: cid,
+			commit:   meta.Commit,
+			ownerID:  deterministicID(ref.owner),
+			moduleID: deterministicID(ref.owner + "/" + ref.module),
+			digest:   digest,
+		}
+		h.commitMu.Unlock()
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeGraph"),
+			slog.String("procedure", "GraphService/GetGraph"),
+			slog.String("branch", "info_cache_writeback"),
+			slog.String("owner", ref.owner),
+			slog.String("module", ref.module),
+			slog.String("repo", ref.module),
+			slog.String("commit", meta.Commit),
+			slog.String("commit_id", cid),
+			slog.Bool("is_v1", isV1),
+		)
 		commits = append(commits, commitInfo{
 			ownerID:  deterministicID(ref.owner),
 			moduleID: deterministicID(ref.owner + "/" + ref.module),
@@ -695,11 +722,21 @@ func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Re
 	}
 	h.commitMu.RUnlock()
 
+	h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+		slog.String("handler", "ServeGetModules"),
+		slog.String("procedure", "ModuleService/GetModules"),
+		slog.String("branch", "request_received"),
+		slog.Int("body_bytes", len(body)),
+		slog.Int("info_cache_size", len(h.infoCache)),
+		slog.String("raw_body_hex", hex.EncodeToString(body)),
+	)
+
 	type moduleKey struct {
 		owner  string
 		module string
 	}
 	var keys []moduleKey
+	var refsSeen, refsMatched, refsRejected int
 	msg := body
 	for len(msg) > 0 {
 		num, typ, n := protowire.ConsumeTag(msg)
@@ -710,8 +747,29 @@ func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Re
 		if num == 1 && typ == protowire.BytesType {
 			v, mLen := protowire.ConsumeBytes(msg)
 			msg = msg[mLen:]
+			refsSeen++
 			if key := parseModuleRefByID(v, moduleLookup); key != nil {
 				keys = append(keys, *key)
+				refsMatched++
+				h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+					slog.String("handler", "ServeGetModules"),
+					slog.String("procedure", "ModuleService/GetModules"),
+					slog.String("branch", "parse_module_ref"),
+					slog.String("outcome", "matched"),
+					slog.Int("ref_bytes", len(v)),
+					slog.String("owner", key.owner),
+					slog.String("module", key.module),
+				)
+			} else {
+				refsRejected++
+				h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+					slog.String("handler", "ServeGetModules"),
+					slog.String("procedure", "ModuleService/GetModules"),
+					slog.String("branch", "parse_module_ref"),
+					slog.String("outcome", "rejected"),
+					slog.Int("ref_bytes", len(v)),
+					slog.String("ref_hex", hex.EncodeToString(v)),
+				)
 			}
 		} else {
 			n = protowire.ConsumeFieldValue(num, typ, msg)
@@ -722,6 +780,16 @@ func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if len(keys) == 0 {
+		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+			slog.String("handler", "ServeGetModules"),
+			slog.String("procedure", "ModuleService/GetModules"),
+			slog.String("branch", "rejection"),
+			slog.String("reason", "no_module_refs_after_parse"),
+			slog.Int("refs_seen", refsSeen),
+			slog.Int("refs_matched", refsMatched),
+			slog.Int("refs_rejected", refsRejected),
+			slog.Int("info_cache_size", len(h.infoCache)),
+		)
 		h.badRequest(r, w, "no module refs", slog.Int("body_bytes", len(body)))
 		return
 	}
