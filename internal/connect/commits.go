@@ -32,6 +32,11 @@ type commitServiceHandler struct {
 	commitMap map[string]moduleRef       // commitID → owner/module
 	infoCache map[string]commitInfoCache // "owner/module" → cached commit info
 	filesMap  map[string][]content.File  // commitID → cached files
+	// knownOwners is a deterministic-id → owner-name lookup populated
+	// at startup from the configured repositories. Used by the
+	// buf.registry.owner.v1.OwnerService/GetOwners handler to answer
+	// owner-info lookups from the buf CLI during `buf dep update`.
+	knownOwners map[string]string
 }
 
 // hlog returns a logger that carries the per-request correlation id so
