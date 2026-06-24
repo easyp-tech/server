@@ -30,17 +30,35 @@ var errUpstream = errors.New("upstream is down")
 
 // mockProvider implements provider for testing.
 type mockProvider struct {
-	meta    content.Meta
-	files   []content.File
-	err     error
-	repos   []source.Source
+	meta  content.Meta
+	files []content.File
+	err   error
+	repos []source.Source
+	// Optional per-commit overrides. When non-nil, GetMeta/GetFiles serve the
+	// entry for the requested commit (or a not-found error), letting tests
+	// distinguish HEAD from an older sha. When nil, the legacy m.meta/m.files
+	// behavior is used (ignoring the commit arg).
+	byCommit     map[string]content.Meta
+	filesByCommit map[string][]content.File
 }
 
-func (m *mockProvider) GetMeta(_ context.Context, _, _, _ string) (content.Meta, error) {
+func (m *mockProvider) GetMeta(_ context.Context, _, _, commit string) (content.Meta, error) {
+	if m.byCommit != nil {
+		if meta, ok := m.byCommit[commit]; ok {
+			return meta, nil
+		}
+		return content.Meta{}, fmt.Errorf("mock: commit %q not found", commit)
+	}
 	return m.meta, m.err
 }
 
-func (m *mockProvider) GetFiles(_ context.Context, _, _, _ string) ([]content.File, error) {
+func (m *mockProvider) GetFiles(_ context.Context, _, _, commit string) ([]content.File, error) {
+	if m.filesByCommit != nil {
+		if files, ok := m.filesByCommit[commit]; ok {
+			return files, nil
+		}
+		return nil, fmt.Errorf("mock: no files for commit %q", commit)
+	}
 	return m.files, m.err
 }
 
@@ -110,6 +128,12 @@ func testMux(p provider) *http.ServeMux {
 // module, etc.).
 func testMuxWithLogger(p provider, log *slog.Logger) *http.ServeMux {
 	return New(log, p, "buf.example.com")
+}
+
+// testMuxWithConfig is like testMuxWithLogger but enables commit-resolution
+// enhancements via NewWithConfig, so probe/prewarm behavior can be exercised.
+func testMuxWithConfig(p provider, log *slog.Logger, cfg CommitResolution) *http.ServeMux {
+	return NewWithConfig(log, p, "buf.example.com", cfg)
 }
 
 // buildGetCommitsRequest builds a protobuf-encoded GetCommits request
@@ -1326,6 +1350,7 @@ func newTestCommitHandler(repo provider) *commitServiceHandler {
 		prewarmTimeout:  time.Second,
 		probeTimeout:    time.Second,
 		probeNegativeTTL: time.Minute,
+		probeSem:        make(chan struct{}, maxConcurrentProbes),
 	}
 }
 
@@ -1413,5 +1438,94 @@ func TestProbeCommitID_MissNegativeCaches(t *testing.T) {
 	}
 	if got := calls.Load(); got != 1 {
 		t.Errorf("negative-cache hit must not re-probe; GetMeta calls = %d, want 1", got)
+	}
+}
+
+// TestProbeCommitID_TransientNotNegativeCached verifies Fix 3: when every
+// source returns a transient error (timeout/cancel/network), the sha is NOT
+// negative-cached, so the next request retries instead of being locked out
+// for ProbeNegativeTTL.
+func TestProbeCommitID_TransientNotNegativeCached(t *testing.T) {
+	var calls atomic.Int32
+	repo := &mockProvider{repos: []source.Source{
+		// Even the owning source errors transiently (simulates upstream outage).
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "real", getMetaErr: context.DeadlineExceeded, getMetaCalls: &calls},
+	}}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+
+	if ref, ok := h.probeCommitID(context.Background(), "real"); ok || ref != nil {
+		t.Fatalf("transient failure should be a miss; got ok=%v ref=%+v", ok, ref)
+	}
+	if h.missCached("real") {
+		t.Fatal("transient miss must not be negative-cached")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("expected 1 GetMeta call, got %d", calls.Load())
+	}
+	// Retry: not negative-cached, so it probes again.
+	if _, ok := h.probeCommitID(context.Background(), "real"); ok {
+		t.Fatal("retry should still miss")
+	}
+	if calls.Load() != 2 {
+		t.Errorf("expected re-probe after transient (2 calls), got %d", calls.Load())
+	}
+}
+
+// TestServeDownload_NonHeadShaServesThatCommit verifies Fix 1: when a
+// Download resolves a non-HEAD sha (here via the probe), ServeDownload fetches
+// THAT sha's content, not HEAD's. Pins the headline correctness fix — without
+// it, the miss-branch fetched HEAD ("") and the client got the wrong commit.
+func TestServeDownload_NonHeadShaServesThatCommit(t *testing.T) {
+	const (
+		headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		oldSha  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		meta: content.Meta{Commit: headSha, DefaultBranch: "main"},
+		byCommit: map[string]content.Meta{
+			headSha: {Commit: headSha},
+			oldSha:  {Commit: oldSha},
+		},
+		filesByCommit: map[string][]content.File{
+			headSha: {{Path: "head.proto", Data: []byte("HEAD-CONTENT")}},
+			oldSha:  {{Path: "old.proto", Data: []byte("OLD-CONTENT")}},
+		},
+		repos: []source.Source{
+			// A source that owns oldSha, so the probe resolves it.
+			&mockSource{owner: "cyp", repoName: "cyp-apis", commit: oldSha},
+		},
+	}
+	cfg := CommitResolution{
+		ProbeEnabled:     true,
+		ProbeTimeout:     time.Second,
+		ProbeNegativeTTL: time.Minute,
+	}
+	mux := testMuxWithConfig(p, log, cfg)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildDownloadRequest(oldSha)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.DownloadService/Download",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s; log: %s", resp.StatusCode, b, logBuf.String())
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("OLD-CONTENT")) {
+		t.Errorf("response should serve oldSha's content (OLD-CONTENT); got %x", respBody)
+	}
+	if bytes.Contains(respBody, []byte("HEAD-CONTENT")) {
+		t.Errorf("response must NOT serve HEAD's content; got %x", respBody)
 	}
 }

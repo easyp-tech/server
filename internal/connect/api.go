@@ -106,6 +106,7 @@ func NewWithConfig(
 		probeEnabled:     cfg.ProbeEnabled,
 		probeNegativeTTL: cfg.ProbeNegativeTTL,
 		probeTimeout:     cfg.ProbeTimeout,
+		probeSem:         make(chan struct{}, maxConcurrentProbes),
 	}
 	if commitHandler.prewarmEnabled && commitHandler.prewarmTimeout > 0 {
 		go commitHandler.prewarmHeads()

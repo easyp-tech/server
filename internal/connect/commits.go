@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"log/slog"
@@ -59,7 +62,17 @@ type commitServiceHandler struct {
 	probeEnabled     bool
 	probeNegativeTTL time.Duration
 	probeTimeout     time.Duration
+
+	// probeSem bounds the number of concurrent upstream sha probes, capping
+	// the N×(sources) fan-out an attacker can trigger by flooding distinct
+	// unknown shas. Acquired/released around probeCommitID's body.
+	probeSem chan struct{}
 }
+
+// maxConcurrentProbes caps simultaneous probeCommitID fan-outs. Each probe
+// issues up to len(sources) upstream GetMeta calls, so this bounds worst-case
+// upstream load from the probe path.
+const maxConcurrentProbes = 4
 
 // hlog returns a logger that carries the per-request correlation id so
 // handler decision-trace lines join up with the access log.
@@ -606,12 +619,25 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 			slog.String("repo", ref.module),
 			slog.String("commit_id", commitID),
 		)
-		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
+		// Fetch the content for the requested commit, not always HEAD.
+		// commit_id is a raw git sha (post 688f058): fetching by it returns
+		// the exact content the client asked for, including non-HEAD commits
+		// recovered via probeCommitID. A foreign-id alias
+		// (resolveForeignCommitID) is not a real sha, so GetMeta(commitID)
+		// fails and we fall back to the resolved HEAD commit (cached.commit)
+		// the alias was bound to — preserving prior single-module behavior.
+		fetchCommit := commitID
+		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, fetchCommit)
+		if err != nil && cached.commit != "" && cached.commit != commitID {
+			fetchCommit = cached.commit
+			meta, err = h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, fetchCommit)
+		}
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
 				slog.String("owner", ref.owner), slog.String("module", ref.module),
 				slog.String("repo", ref.module),
 				slog.String("commit_id", commitID),
+				slog.String("fetch_commit", fetchCommit),
 				slog.String("upstream_error", err.Error()))
 			return
 		}
@@ -839,15 +865,29 @@ func (h *commitServiceHandler) resolveForeignCommitID(commitID string) *moduleRe
 // same sha hit directly. infoCache is populated with a digest-less entry —
 // ServeDownload's miss-branch recomputes files+digest on first use, so the
 // digest field is not load-bearing here.
+//
+// If an infoCache entry already exists for the module (e.g. a prior
+// ServeGraph computed the digest and cached files), its digest is preserved —
+// only the resolved-commit identity is refreshed. Without this, a late
+// pre-warm would clobber a computed digest with nil and the next cache-hit
+// Download would serve a zero digest.
 func (h *commitServiceHandler) registerResolved(sha, owner, module string) {
 	key := owner + "/" + module
 	h.commitMu.Lock()
 	h.commitMap[sha] = moduleRef{owner: owner, module: module}
-	h.infoCache[key] = commitInfoCache{
-		commitID: sha,
-		commit:   sha,
-		ownerID:  owner,
-		moduleID: key,
+	if existing, ok := h.infoCache[key]; ok {
+		existing.commitID = sha
+		existing.commit = sha
+		existing.ownerID = owner
+		existing.moduleID = key
+		h.infoCache[key] = existing
+	} else {
+		h.infoCache[key] = commitInfoCache{
+			commitID: sha,
+			commit:   sha,
+			ownerID:  owner,
+			moduleID: key,
+		}
 	}
 	h.commitMu.Unlock()
 }
@@ -951,6 +991,29 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 	if sha == "" || h.missCached(sha) {
 		return nil, false
 	}
+	// Re-check commitMap under the lock: a concurrent resolver may have
+	// already registered this sha while we were waiting on the semaphore.
+	h.commitMu.RLock()
+	ref, already := h.commitMap[sha]
+	h.commitMu.RUnlock()
+	if already {
+		r := ref
+		return &r, true
+	}
+
+	// Bound concurrent probes so a flood of distinct unknown shas cannot
+	// amplify to unbounded upstream load. Non-blocking acquire: if the cap is
+	// reached, decline (the caller 400s; the client retries and hits the
+	// negative cache only after a probe eventually runs).
+	if h.probeSem != nil {
+		select {
+		case h.probeSem <- struct{}{}:
+			defer func() { <-h.probeSem }()
+		default:
+			return nil, false
+		}
+	}
+
 	sources := h.api.repo.Repositories()
 	if len(sources) == 0 {
 		return nil, false
@@ -962,6 +1025,11 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 	}
 	// Buffered enough to never block a successful goroutine; first success wins.
 	results := make(chan probeResult, len(sources))
+	// transient is set if any source returned a transient error (timeout /
+	// cancellation / network). In that case the all-fail result is
+	// inconclusive and must NOT be negative-cached — a brief upstream outage
+	// should not make a real sha unavailable for ProbeNegativeTTL.
+	var transient atomic.Bool
 	var wg sync.WaitGroup
 	for _, s := range sources {
 		wg.Add(1)
@@ -970,7 +1038,13 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 			pctx, cancel := context.WithTimeout(ctx, h.probeTimeout)
 			defer cancel()
 			meta, err := s.GetMeta(pctx, sha)
-			if err != nil || meta.Commit == "" {
+			if err != nil {
+				if isTransientErr(err) {
+					transient.Store(true)
+				}
+				return
+			}
+			if meta.Commit == "" {
 				return
 			}
 			results <- probeResult{
@@ -988,8 +1062,27 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 		ref := r.ref
 		return &ref, true
 	}
-	h.rememberMiss(sha)
+	// Only negative-cache when every source returned a definitive not-found.
+	// A transient failure (timeout/network) leaves the sha retryable.
+	if !transient.Load() {
+		h.rememberMiss(sha)
+	}
 	return nil, false
+}
+
+// isTransientErr reports whether err looks like a transient upstream failure
+// (timeout, cancellation, or a network error) rather than a definitive
+// "commit not found". Used to avoid negative-caching shas during brief
+// upstream outages.
+func isTransientErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // splitOwnerModule splits an infoCache key of the form "owner/module" back
