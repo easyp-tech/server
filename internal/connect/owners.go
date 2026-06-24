@@ -116,6 +116,32 @@ func (h *commitServiceHandler) resolveOwnerName(ref ownerRef) string {
 	return ""
 }
 
+// buildKnownModules collects the unique set of modules (owner + repo name)
+// from the configured sources. It backs the ModuleService/GetModules
+// foreign-module-id fallback: when a client sends a cached module id the
+// proxy does not recognize (an old hashed id from a prior build, or an
+// opaque id minted by real buf.build) and the deployment serves exactly
+// one module, the fallback serves that module instead of 400ing. Returns
+// nil unless exactly one unique module is configured, so the fallback
+// never guesses across multiple modules.
+func buildKnownModules(repos []source.Source) *moduleRef {
+	seen := make(map[string]moduleRef)
+	for _, repo := range repos {
+		owner := repo.Owner()
+		module := repo.RepoName()
+		if owner == "" || module == "" {
+			continue
+		}
+		seen[owner+"/"+module] = moduleRef{owner: owner, module: module}
+	}
+	if len(seen) == 1 {
+		for _, m := range seen {
+			return &m
+		}
+	}
+	return nil
+}
+
 // buildKnownOwners builds the id → name lookup used by ServeGetOwners.
 // Owner ids are the raw owner name, so the map is keyed by name.
 //

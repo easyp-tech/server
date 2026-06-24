@@ -61,11 +61,13 @@ func New(
 	// which the buf CLI rejects with "invalid content-type: ... expecting
 	// application/proto".
 	knownOwners := buildKnownOwners(core.Repositories())
+	singleModule := buildKnownModules(core.Repositories())
 	commitHandler := &commitServiceHandler{
 		api: a, commitMap: make(map[string]moduleRef),
 		infoCache:   make(map[string]commitInfoCache),
 		filesMap:    make(map[string][]content.File),
 		knownOwners: knownOwners,
+		singleModule: singleModule,
 	}
 	mux.HandleFunc("/buf.registry.module.v1.CommitService/", commitHandler.ServeHTTP)
 	mux.HandleFunc("/buf.registry.module.v1beta1.CommitService/", commitHandler.ServeHTTP)

@@ -37,6 +37,11 @@ type commitServiceHandler struct {
 	// buf.registry.owner.v1.OwnerService/GetOwners handler to answer
 	// owner-info lookups from the buf CLI during `buf dep update`.
 	knownOwners map[string]string
+	// singleModule is the sole configured module when the deployment
+	// serves exactly one (the common case). Used by the
+	// ModuleService/GetModules foreign-module-id fallback; nil otherwise
+	// so the fallback never guesses across multiple modules.
+	singleModule *moduleRef
 }
 
 // hlog returns a logger that carries the per-request correlation id so
@@ -877,18 +882,45 @@ func (h *commitServiceHandler) ServeGetModules(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if len(keys) == 0 {
-		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
-			slog.String("handler", "ServeGetModules"),
-			slog.String("procedure", "ModuleService/GetModules"),
-			slog.String("branch", "rejection"),
-			slog.String("reason", "no_module_refs_after_parse"),
-			slog.Int("refs_seen", refsSeen),
-			slog.Int("refs_matched", refsMatched),
-			slog.Int("refs_rejected", refsRejected),
-			slog.Int("info_cache_size", len(h.infoCache)),
-		)
-		h.badRequest(r, w, "no module refs", slog.Int("body_bytes", len(body)))
-		return
+		// Foreign-module-id fallback. The buf client usually sends
+		// ModuleRef.id (the id it cached from a prior GetModules response).
+		// If that id was minted by an older proxy build (hashed) or by a
+		// different registry (real buf.build), it will not match the raw
+		// "owner/module" ids this build emits, so every ref rejects and we
+		// would 400. When the deployment serves exactly one module, serve
+		// it rather than failing — mirrors the Download foreign-commit_id
+		// fallback. Multi-module deployments stay strict (singleModule nil).
+		if h.singleModule != nil {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeGetModules"),
+				slog.String("procedure", "ModuleService/GetModules"),
+				slog.String("branch", "module_id_fallback"),
+				slog.String("reason", "no_module_refs_after_parse"),
+				slog.Int("refs_seen", refsSeen),
+				slog.Int("refs_matched", refsMatched),
+				slog.Int("refs_rejected", refsRejected),
+				slog.String("owner", h.singleModule.owner),
+				slog.String("module", h.singleModule.module),
+				slog.String("repo", h.singleModule.module),
+			)
+			keys = append(keys, moduleKey{
+				owner:  h.singleModule.owner,
+				module: h.singleModule.module,
+			})
+		} else {
+			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+				slog.String("handler", "ServeGetModules"),
+				slog.String("procedure", "ModuleService/GetModules"),
+				slog.String("branch", "rejection"),
+				slog.String("reason", "no_module_refs_after_parse"),
+				slog.Int("refs_seen", refsSeen),
+				slog.Int("refs_matched", refsMatched),
+				slog.Int("refs_rejected", refsRejected),
+				slog.Int("info_cache_size", len(h.infoCache)),
+			)
+			h.badRequest(r, w, "no module refs", slog.Int("body_bytes", len(body)))
+			return
+		}
 	}
 
 	// Build GetModulesResponse: repeated Module modules = 1

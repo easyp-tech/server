@@ -748,6 +748,109 @@ func TestServeDownload_ForeignCommitID_TrulyUnknownModule(t *testing.T) {
 	}
 }
 
+// buildGetModulesRequestByID builds a ModuleService/GetModules request that
+// references a module by id (ModuleRef.id oneof), the form the buf CLI sends
+// once it has cached a module id from a prior GetModules response.
+//   - ModuleRef { oneof value { string id = 1; Name name = 2 } }
+//   - GetModulesRequest { repeated ModuleRef module_refs = 1 }
+func buildGetModulesRequestByID(id string) []byte {
+	var ref []byte
+	ref = protowire.AppendTag(ref, 1, protowire.BytesType) // id
+	ref = protowire.AppendString(ref, id)
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType) // module_refs
+	req = append(req, protowire.AppendVarint(nil, uint64(len(ref)))...)
+	req = append(req, ref...)
+	return req
+}
+
+// TestServeGetModules_ForeignModuleID_FallbackKnownModule pins the
+// foreign-module-id fallback: when a client sends a module id the proxy
+// does not recognize (an old hashed id from a prior build, or an opaque id
+// from real buf.build) but the deployment serves exactly one module,
+// ServeGetModules must serve that module (200) rather than 400. Mirrors the
+// Download foreign-commit_id fallback. The id below is the legacy
+// deterministicID("googleapis/googleapis"); this build emits raw
+// "googleapis/googleapis", so the id cannot match by lookup.
+func TestServeGetModules_ForeignModuleID_FallbackKnownModule(t *testing.T) {
+	const foreignModuleID = "34c82441eab7ea2fea659aae20495091" // legacy hash id
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		repos: []source.Source{
+			&mockSource{owner: "googleapis", repoName: "googleapis"},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	for _, path := range []string{
+		"/buf.registry.module.v1.ModuleService/GetModules",
+		"/buf.registry.module.v1beta1.ModuleService/GetModules",
+	} {
+		t.Run(path, func(t *testing.T) {
+			logBuf.Reset()
+			body := buildGetModulesRequestByID(foreignModuleID)
+			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				respBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200 (fallback should serve single known module); body: %s", resp.StatusCode, respBody)
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if len(respBody) == 0 {
+				t.Fatalf("empty response body; expected a Module message")
+			}
+			logLine := logBuf.String()
+			if !strings.Contains(logLine, `"branch":"module_id_fallback"`) {
+				t.Errorf("log does not contain module_id_fallback branch\nlog: %s", logLine)
+			}
+		})
+	}
+}
+
+// TestServeGetModules_ForeignModuleID_TrulyUnknown pins the safety net: when
+// module id is foreign AND the deployment does not serve exactly one module
+// (singleModule nil — no repos configured), the request must still surface as
+// 400 "no module refs". Preserves the strict contract when the fallback
+// cannot recover the module.
+func TestServeGetModules_ForeignModuleID_TrulyUnknown(t *testing.T) {
+	const foreignModuleID = "34c82441eab7ea2fea659aae20495091"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{} // no repos -> singleModule nil
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildGetModulesRequestByID(foreignModuleID)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.ModuleService/GetModules",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 400 (no single known module); body: %s", resp.StatusCode, respBody)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("no module refs")) {
+		t.Errorf("body %q does not mention 'no module refs'", respBody)
+	}
+}
+
 // TestBadRequest_OnMalformedRepoName pins the connect-go mapping for
 // validation errors: a malformed repository name should produce a
 // CodeInvalidArgument error, which connect-go surfaces as HTTP 400.
