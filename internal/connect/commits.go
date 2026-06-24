@@ -163,8 +163,8 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			)
 		}
 		commits = append(commits, commitInfo{
-			ownerID:  deterministicID(ref.owner),
-			moduleID: deterministicID(ref.owner + "/" + ref.module),
+			ownerID:  ref.owner,
+			moduleID: ref.owner + "/" + ref.module,
 			commitID: cid,
 			digest:   digest,
 		})
@@ -173,8 +173,8 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
 			commitID: cid,
 			commit:   meta.Commit,
-			ownerID:  deterministicID(ref.owner),
-			moduleID: deterministicID(ref.owner + "/" + ref.module),
+			ownerID:  ref.owner,
+			moduleID: ref.owner + "/" + ref.module,
 			digest:   digest,
 		}
 		h.commitMu.Unlock()
@@ -355,8 +355,8 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
 			commitID: cid,
 			commit:   meta.Commit,
-			ownerID:  deterministicID(ref.owner),
-			moduleID: deterministicID(ref.owner + "/" + ref.module),
+			ownerID:  ref.owner,
+			moduleID: ref.owner + "/" + ref.module,
 			digest:   digest,
 		}
 		h.commitMu.Unlock()
@@ -372,8 +372,8 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 			slog.Bool("is_v1", isV1),
 		)
 		commits = append(commits, commitInfo{
-			ownerID:  deterministicID(ref.owner),
-			moduleID: deterministicID(ref.owner + "/" + ref.module),
+			ownerID:  ref.owner,
+			moduleID: ref.owner + "/" + ref.module,
 			commitID: cid,
 			owner:    ref.owner,
 			module:   ref.module,

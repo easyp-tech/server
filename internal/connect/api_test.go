@@ -1032,7 +1032,7 @@ func TestOwnerServiceV1ReturnsProtobuf(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	body := buildGetOwnersRequestByID(deterministicID("googleapis"))
+	body := buildGetOwnersRequestByID("googleapis")
 	resp, err := http.Post(
 		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
 		"application/proto",
@@ -1112,7 +1112,7 @@ func TestOwnerServiceV1UnknownOwner(t *testing.T) {
 	defer server.Close()
 
 	// Build a request for an owner the proxy does NOT serve.
-	body := buildGetOwnersRequestByID(deterministicID("not-a-real-owner"))
+	body := buildGetOwnersRequestByID("not-a-real-owner")
 	resp, err := http.Post(
 		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
 		"application/proto",

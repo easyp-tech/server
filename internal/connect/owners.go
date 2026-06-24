@@ -84,7 +84,7 @@ func (h *commitServiceHandler) ServeGetOwners(w http.ResponseWriter, r *http.Req
 			slog.String("outcome", "matched"),
 			slog.String("owner", name),
 		)
-		owner := buildOwnerOrganization(deterministicID(name), name)
+		owner := buildOwnerOrganization(name, name)
 		respMsg = protowire.AppendTag(respMsg, 1, protowire.BytesType)
 		respMsg = append(respMsg, protowire.AppendVarint(nil, uint64(len(owner)))...)
 		respMsg = append(respMsg, owner...)
@@ -106,9 +106,9 @@ func (h *commitServiceHandler) resolveOwnerName(ref ownerRef) string {
 	}
 	if ref.name != "" {
 		// Validate the name is in our known set so we don't fabricate
-		// owners we don't serve.
-		id := deterministicID(ref.name)
-		if _, ok := h.knownOwners[id]; ok {
+		// owners we don't serve. Owner ids are the raw owner name, so
+		// the id-keyed and name-keyed lookups share one key space.
+		if _, ok := h.knownOwners[ref.name]; ok {
 			return ref.name
 		}
 		return ""
@@ -117,8 +117,7 @@ func (h *commitServiceHandler) resolveOwnerName(ref ownerRef) string {
 }
 
 // buildKnownOwners builds the id → name lookup used by ServeGetOwners.
-// It iterates the configured repositories and collects the unique set of
-// owner names, computing the buf-style deterministic id for each.
+// Owner ids are the raw owner name, so the map is keyed by name.
 //
 // The map is built once at startup from the source list. Owners can be
 // added by configuring a new repository; the proxy does not need to
@@ -130,7 +129,7 @@ func buildKnownOwners(repos []source.Source) map[string]string {
 		if name == "" {
 			continue
 		}
-		out[deterministicID(name)] = name
+		out[name] = name
 	}
 	return out
 }

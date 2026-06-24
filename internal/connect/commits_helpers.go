@@ -3,20 +3,12 @@ package connect
 import (
 	"strings"
 
-	"github.com/easyp-tech/server/internal/detid"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
 type moduleRef struct {
 	owner  string
 	module string
-}
-
-// deterministicID is the buf-style deterministic id for module and owner
-// resources. It delegates to the shared internal/detid package. Commit ids
-// are NOT produced here — those are the raw git commit sha.
-func deterministicID(input string) string {
-	return detid.DeterministicID(input)
 }
 
 func parseResourceRefs(msg []byte) []moduleRef {
@@ -310,7 +302,7 @@ func parseModuleName(msg []byte) *struct {
 func buildModule(owner, module string) []byte {
 	var m []byte
 	m = protowire.AppendTag(m, 1, protowire.BytesType)
-	m = protowire.AppendString(m, deterministicID(owner+"/"+module))
+	m = protowire.AppendString(m, owner+"/"+module)
 
 	// create_time: Timestamp { seconds=1, nanos=2 }
 	var ts []byte
@@ -330,7 +322,7 @@ func buildModule(owner, module string) []byte {
 	m = protowire.AppendTag(m, 4, protowire.BytesType)
 	m = protowire.AppendString(m, module)
 	m = protowire.AppendTag(m, 5, protowire.BytesType)
-	m = protowire.AppendString(m, deterministicID(owner))
+	m = protowire.AppendString(m, owner)
 
 	// visibility = MODULE_VISIBILITY_PUBLIC = 1
 	m = protowire.AppendTag(m, 6, protowire.VarintType)
