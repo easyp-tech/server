@@ -23,11 +23,32 @@ const (
 // dynamically (one directory per version) so that adding a new version to
 // the cache is enough to extend the matrix of E2E tests. Order is the
 // natural directory sort (lexicographic), which puts older versions first.
+//
+// Returns an empty slice (without failing the test) when testdata/buf does
+// not exist. This is the common case on CI, where the cached binaries are
+// gitignored: callers should treat len(versions)==0 as "no binaries to test
+// against" and t.Skip() rather than fataling. The directory being unreadable
+// for a different reason (permission denied, etc.) is still a hard error.
 func AvailableBufVersions(t *testing.T) []string {
 	t.Helper()
 
 	projectRoot := findProjectRoot(t)
 	dir := filepath.Join(projectRoot, "testdata", "buf")
+
+	// A missing testdata/buf is the expected state on CI (binaries are
+	// gitignored) and on a fresh checkout. Treat it as "no versions
+	// available" so matrix tests can skip rather than fail the whole run.
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("stat testdata/buf: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("testdata/buf is not a directory: %s", dir)
+	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading testdata/buf: %v", err)
@@ -45,6 +66,9 @@ func AvailableBufVersions(t *testing.T) []string {
 	}
 	return versions
 }
+
+// GetBuf returns the path to a pinned buf binary, downloading it from GitHub
+// Releases on cache miss. Binaries are cached at testdata/buf/{version}/buf.
 //
 // Checksum verification is intentionally skipped: the download uses HTTPS from
 // GitHub's CDN which provides transport integrity. The binaries are used only
