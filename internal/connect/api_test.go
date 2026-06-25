@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	registry "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
@@ -27,17 +30,35 @@ var errUpstream = errors.New("upstream is down")
 
 // mockProvider implements provider for testing.
 type mockProvider struct {
-	meta    content.Meta
-	files   []content.File
-	err     error
-	repos   []source.Source
+	meta  content.Meta
+	files []content.File
+	err   error
+	repos []source.Source
+	// Optional per-commit overrides. When non-nil, GetMeta/GetFiles serve the
+	// entry for the requested commit (or a not-found error), letting tests
+	// distinguish HEAD from an older sha. When nil, the legacy m.meta/m.files
+	// behavior is used (ignoring the commit arg).
+	byCommit     map[string]content.Meta
+	filesByCommit map[string][]content.File
 }
 
-func (m *mockProvider) GetMeta(_ context.Context, _, _, _ string) (content.Meta, error) {
+func (m *mockProvider) GetMeta(_ context.Context, _, _, commit string) (content.Meta, error) {
+	if m.byCommit != nil {
+		if meta, ok := m.byCommit[commit]; ok {
+			return meta, nil
+		}
+		return content.Meta{}, fmt.Errorf("mock: commit %q not found", commit)
+	}
 	return m.meta, m.err
 }
 
-func (m *mockProvider) GetFiles(_ context.Context, _, _, _ string) ([]content.File, error) {
+func (m *mockProvider) GetFiles(_ context.Context, _, _, commit string) ([]content.File, error) {
+	if m.filesByCommit != nil {
+		if files, ok := m.filesByCommit[commit]; ok {
+			return files, nil
+		}
+		return nil, fmt.Errorf("mock: no files for commit %q", commit)
+	}
 	return m.files, m.err
 }
 
@@ -49,14 +70,34 @@ func (m *mockProvider) Repositories() []source.Source {
 // OwnerService tests. It only implements the methods needed for
 // buildKnownOwners (Owner, RepoName) plus the Source interface contract
 // that the rest of the package relies on.
+//
+// For pre-warm/probe tests, GetMeta is sha-aware: it owns exactly one commit
+// (commit). A HEAD probe (commit arg "") resolves to it; any other commit arg
+// is reported as not-owned (error). getMetaCalls counts calls so tests can
+// assert the negative cache suppresses repeat probes.
 type mockSource struct {
 	owner    string
 	repoName string
 	typ      string
+	commit   string
+
+	getMetaCalls *atomic.Int32
+	getMetaErr   error // when set, GetMeta always returns this error
 }
 
-func (s *mockSource) GetMeta(_ context.Context, _ string) (content.Meta, error) {
-	return content.Meta{}, nil
+func (s *mockSource) GetMeta(_ context.Context, commit string) (content.Meta, error) {
+	if s.getMetaCalls != nil {
+		s.getMetaCalls.Add(1)
+	}
+	if s.getMetaErr != nil {
+		return content.Meta{}, s.getMetaErr
+	}
+	// HEAD (empty arg) resolves to the source's own commit; a specific commit
+	// resolves only if it is the one this source owns.
+	if commit != "" && commit != s.commit {
+		return content.Meta{}, fmt.Errorf("mock: commit %q not found in %s/%s", commit, s.owner, s.repoName)
+	}
+	return content.Meta{Commit: s.commit, DefaultBranch: "main"}, nil
 }
 
 func (s *mockSource) GetFiles(_ context.Context, _ string) ([]content.File, error) {
@@ -87,6 +128,12 @@ func testMux(p provider) *http.ServeMux {
 // module, etc.).
 func testMuxWithLogger(p provider, log *slog.Logger) *http.ServeMux {
 	return New(log, p, "buf.example.com")
+}
+
+// testMuxWithConfig is like testMuxWithLogger but enables commit-resolution
+// enhancements via NewWithConfig, so probe/prewarm behavior can be exercised.
+func testMuxWithConfig(p provider, log *slog.Logger, cfg CommitResolution) *http.ServeMux {
+	return NewWithConfig(log, p, "buf.example.com", cfg)
 }
 
 // buildGetCommitsRequest builds a protobuf-encoded GetCommits request
@@ -500,12 +547,18 @@ func extractCommitID(msg []byte) string {
 
 // --- Error classification tests ---
 
-// TestBadRequest_OnUnknownCommitID pins the stateful "commit id not seen"
-// behavior of DownloadService/Download. The Download handler requires the
-// caller to have already called CommitService/GetCommits (which populates
-// the commitMap). An unknown id is a client protocol error, not an upstream
-// failure — surface it as 400 with an explicit message and log the commit id
-// itself so operators can correlate with prior GetCommits traffic.
+// TestBadRequest_OnUnknownCommitID pins the "truly unresolvable module"
+// behavior of DownloadService/Download. When the proxy has no module
+// identity it can fall back to (infoCache empty — no prior GetCommits /
+// GetGraph in this session), a foreign commit_id cannot be served and must
+// surface as 400 with an explicit message and the commit id logged so
+// operators can correlate with prior GetCommits traffic.
+//
+// Note: under the foreign-commit_id fallback semantics, a request with an
+// unknown commit_id but a populated single-entry infoCache is served (see
+// TestServeDownload_ForeignCommitID_FallbackKnownModule). This test only
+// passes because no CommitService/GetCommits call is made, so infoCache is
+// empty and the fallback has nothing to resolve to.
 func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 	const wantCommitID = "000000000000000000000000deadbeef"
 
@@ -546,6 +599,302 @@ func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 				t.Errorf("log does not contain server attr\nlog: %s", logLine)
 			}
 		})
+	}
+}
+
+// TestServeDownload_ForeignCommitID_FallbackKnownModule pins the foreign
+// commit_id fallback: when a client sends a commit_id the proxy never
+// minted (e.g. cached from real buf.build in buf.lock) but the module is
+// known (a prior CommitService/GetCommits populated infoCache with exactly
+// one entry), ServeDownload must serve the content (200) rather than 400.
+//
+// This reproduces the production symptom from the download-foreign-commit-id
+// debug session: the proxy serves googleapis/googleapis, GetGraph minted a
+// proxy-local id, but the client's Download carried a cached foreign id.
+func TestServeDownload_ForeignCommitID_FallbackKnownModule(t *testing.T) {
+	const foreignCommitID = "2d1654c2cc02a6e7f3bbea2d06fc1c59"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		meta: content.Meta{
+			Commit:        "e57bae6efbd075a925978a79bb9b997beb4ecc19",
+			DefaultBranch: "main",
+		},
+		files: []content.File{
+			{Path: "google/api/http.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Warm infoCache with exactly one module via CommitService/GetCommits.
+	// We do NOT use the id it returns; instead we send a foreign id the
+	// proxy never minted.
+	commitResp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.CommitService/GetCommits",
+		"application/proto",
+		bytes.NewReader(buildGetCommitsRequest("googleapis", "googleapis")),
+	)
+	if err != nil {
+		t.Fatalf("warm-up GetCommits request failed: %v", err)
+	}
+	if commitResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(commitResp.Body)
+		commitResp.Body.Close()
+		t.Fatalf("warm-up GetCommits status = %d, want 200; body: %s", commitResp.StatusCode, b)
+	}
+	io.ReadAll(commitResp.Body)
+	commitResp.Body.Close()
+
+	for _, path := range []string{
+		"/buf.registry.module.v1.DownloadService/Download",
+		"/buf.registry.module.v1beta1.DownloadService/Download",
+	} {
+		t.Run(path, func(t *testing.T) {
+			logBuf.Reset()
+			body := buildDownloadRequest(foreignCommitID)
+			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				respBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200 (foreign id should fall back to known module); body: %s", resp.StatusCode, respBody)
+			}
+			if ct := resp.Header.Get("Content-Type"); ct != "application/proto" {
+				t.Errorf("Content-Type = %q, want %q", ct, "application/proto")
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if len(respBody) == 0 {
+				t.Fatal("empty response body")
+			}
+
+			// The foreign id was served either via the fallback branch (first
+			// time) or via the commitMap alias registered by a prior fallback
+			// (subtests share the handler, so the second subtest reuses the
+			// alias the first one registered). Either way the request must
+			// succeed; the log must reference the foreign id.
+			logLine := logBuf.String()
+			if !strings.Contains(logLine, `"commit_id":"`+foreignCommitID+`"`) {
+				t.Errorf("log does not reference foreign commit_id=%s\nlog: %s", foreignCommitID, logLine)
+			}
+			fallbackFired := strings.Contains(logLine, `"branch":"foreign_commit_id_fallback"`)
+			aliasHit := strings.Contains(logLine, `"ref_found":true`)
+			if !fallbackFired && !aliasHit {
+				t.Errorf("neither fallback nor alias path served the request\nlog: %s", logLine)
+			}
+		})
+	}
+}
+
+// TestServeDownload_ForeignCommitID_FallbackAliasCachesMapping verifies the
+// optimization where, after the first foreign-commit_id fallback succeeds,
+// the foreign id is registered as an alias in commitMap so a second request
+// for the same foreign id is served directly (without re-running the
+// fallback). We assert this indirectly: the second request must still
+// return 200, and the log must NOT contain a second
+// foreign_commit_id_fallback line — proving the alias hit took the direct
+// path.
+func TestServeDownload_ForeignCommitID_FallbackAliasCachesMapping(t *testing.T) {
+	const foreignCommitID = "2d1654c2cc02a6e7f3bbea2d06fc1c59"
+
+	log := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	p := &mockProvider{
+		meta: content.Meta{Commit: "e57bae6efbd075a925978a79bb9b997beb4ecc19", DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "google/api/http.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	// Warm infoCache with exactly one module.
+	commitResp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.CommitService/GetCommits",
+		"application/proto",
+		bytes.NewReader(buildGetCommitsRequest("googleapis", "googleapis")),
+	)
+	if err != nil {
+		t.Fatalf("warm-up GetCommits request failed: %v", err)
+	}
+	io.ReadAll(commitResp.Body)
+	commitResp.Body.Close()
+
+	body := buildDownloadRequest(foreignCommitID)
+	path := "/buf.registry.module.v1.DownloadService/Download"
+
+	// First request: fallback fires, registers alias.
+	resp1, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("first request failed: %v", err)
+	}
+	if resp1.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp1.Body)
+		resp1.Body.Close()
+		t.Fatalf("first request status = %d, want 200; body: %s", resp1.StatusCode, b)
+	}
+	io.ReadAll(resp1.Body)
+	resp1.Body.Close()
+
+	// Second request for the same foreign id: alias hit, no fallback.
+	resp2, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("second request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("second request status = %d, want 200 (alias should serve); body: %s", resp2.StatusCode, b)
+	}
+}
+
+// TestServeDownload_ForeignCommitID_TrulyUnknownModule pins the safety net:
+// when commit_id is foreign AND the proxy has no resolvable module identity
+// (infoCache empty — nothing served in this session), the request must
+// still surface as 400. This preserves the original contract for the case
+// where the fallback legitimately cannot recover the module.
+func TestServeDownload_ForeignCommitID_TrulyUnknownModule(t *testing.T) {
+	const foreignCommitID = "2d1654c2cc02a6e7f3bbea2d06fc1c59"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	// No GetCommits call is made, so infoCache stays empty.
+	p := &mockProvider{
+		meta: content.Meta{Commit: "e57bae6efbd075a925978a79bb9b997beb4ecc19", DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "google/api/http.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildDownloadRequest(foreignCommitID)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.DownloadService/Download",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 400 (no resolvable module); body: %s", resp.StatusCode, respBody)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("unknown commit id")) {
+		t.Errorf("body %q does not mention 'unknown commit id'", respBody)
+	}
+}
+
+// buildGetModulesRequestByID builds a ModuleService/GetModules request that
+// references a module by id (ModuleRef.id oneof), the form the buf CLI sends
+// once it has cached a module id from a prior GetModules response.
+//   - ModuleRef { oneof value { string id = 1; Name name = 2 } }
+//   - GetModulesRequest { repeated ModuleRef module_refs = 1 }
+func buildGetModulesRequestByID(id string) []byte {
+	var ref []byte
+	ref = protowire.AppendTag(ref, 1, protowire.BytesType) // id
+	ref = protowire.AppendString(ref, id)
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType) // module_refs
+	req = append(req, protowire.AppendVarint(nil, uint64(len(ref)))...)
+	req = append(req, ref...)
+	return req
+}
+
+// TestServeGetModules_ForeignModuleID_FallbackKnownModule pins the
+// foreign-module-id fallback: when a client sends a module id the proxy
+// does not recognize (an old hashed id from a prior build, or an opaque id
+// from real buf.build) but the deployment serves exactly one module,
+// ServeGetModules must serve that module (200) rather than 400. Mirrors the
+// Download foreign-commit_id fallback. The id below is the legacy
+// deterministicID("googleapis/googleapis"); this build emits raw
+// "googleapis/googleapis", so the id cannot match by lookup.
+func TestServeGetModules_ForeignModuleID_FallbackKnownModule(t *testing.T) {
+	const foreignModuleID = "34c82441eab7ea2fea659aae20495091" // legacy hash id
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		repos: []source.Source{
+			&mockSource{owner: "googleapis", repoName: "googleapis"},
+		},
+	}
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	for _, path := range []string{
+		"/buf.registry.module.v1.ModuleService/GetModules",
+		"/buf.registry.module.v1beta1.ModuleService/GetModules",
+	} {
+		t.Run(path, func(t *testing.T) {
+			logBuf.Reset()
+			body := buildGetModulesRequestByID(foreignModuleID)
+			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				respBody, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200 (fallback should serve single known module); body: %s", resp.StatusCode, respBody)
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if len(respBody) == 0 {
+				t.Fatalf("empty response body; expected a Module message")
+			}
+			logLine := logBuf.String()
+			if !strings.Contains(logLine, `"branch":"module_id_fallback"`) {
+				t.Errorf("log does not contain module_id_fallback branch\nlog: %s", logLine)
+			}
+		})
+	}
+}
+
+// TestServeGetModules_ForeignModuleID_TrulyUnknown pins the safety net: when
+// module id is foreign AND the deployment does not serve exactly one module
+// (singleModule nil — no repos configured), the request must still surface as
+// 400 "no module refs". Preserves the strict contract when the fallback
+// cannot recover the module.
+func TestServeGetModules_ForeignModuleID_TrulyUnknown(t *testing.T) {
+	const foreignModuleID = "34c82441eab7ea2fea659aae20495091"
+
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{} // no repos -> singleModule nil
+	mux := testMuxWithLogger(p, log)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildGetModulesRequestByID(foreignModuleID)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.ModuleService/GetModules",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 400 (no single known module); body: %s", resp.StatusCode, respBody)
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("no module refs")) {
+		t.Errorf("body %q does not mention 'no module refs'", respBody)
 	}
 }
 
@@ -833,7 +1182,7 @@ func TestOwnerServiceV1ReturnsProtobuf(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	body := buildGetOwnersRequestByID(deterministicID("googleapis"))
+	body := buildGetOwnersRequestByID("googleapis")
 	resp, err := http.Post(
 		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
 		"application/proto",
@@ -913,7 +1262,7 @@ func TestOwnerServiceV1UnknownOwner(t *testing.T) {
 	defer server.Close()
 
 	// Build a request for an owner the proxy does NOT serve.
-	body := buildGetOwnersRequestByID(deterministicID("not-a-real-owner"))
+	body := buildGetOwnersRequestByID("not-a-real-owner")
 	resp, err := http.Post(
 		server.URL+"/buf.registry.owner.v1.OwnerService/GetOwners",
 		"application/proto",
@@ -981,5 +1330,202 @@ func TestOwnerServiceV1MethodNotAllowed(t *testing.T) {
 
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
+	}
+}
+
+// newTestCommitHandler builds a commitServiceHandler wired to a provider with
+// minimal state, for direct unit testing of prewarmHeads / probeCommitID
+// without the HTTP layer. Enhancements are off by default; tests flip the
+// knobs they exercise.
+func newTestCommitHandler(repo provider) *commitServiceHandler {
+	return &commitServiceHandler{ //nolint:exhaustruct
+		api: &api{ //nolint:exhaustruct
+			log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			repo: repo,
+		},
+		commitMap:       make(map[string]moduleRef),
+		infoCache:       make(map[string]commitInfoCache),
+		filesMap:        make(map[string][]content.File),
+		missCache:       make(map[string]time.Time),
+		prewarmTimeout:  time.Second,
+		probeTimeout:    time.Second,
+		probeNegativeTTL: time.Minute,
+		probeSem:        make(chan struct{}, maxConcurrentProbes),
+	}
+}
+
+// TestPrewarmHeads_PopulatesCommitMap verifies the startup sweep resolves the
+// HEAD commit of each configured source and registers it so a later Download
+// of that sha hits without a prior in-session GetCommits.
+func TestPrewarmHeads_PopulatesCommitMap(t *testing.T) {
+	repo := &mockProvider{repos: []source.Source{
+		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "aaa111"},
+		&mockSource{owner: "cyp", repoName: "cyp-logger", commit: "bbb222"},
+	}}
+	h := newTestCommitHandler(repo)
+	h.prewarmEnabled = true
+
+	h.prewarmHeads() // synchronous (sync.Once guards the goroutine-launched path)
+
+	h.commitMu.RLock()
+	ref, ok := h.commitMap["aaa111"]
+	h.commitMu.RUnlock()
+	if !ok || ref.owner != "googleapis" || ref.module != "googleapis" {
+		t.Fatalf("aaa111 not resolved to googleapis/googleapis; ok=%v ref=%+v", ok, ref)
+	}
+	h.commitMu.RLock()
+	_, ok = h.commitMap["bbb222"]
+	h.commitMu.RUnlock()
+	if !ok {
+		t.Fatal("bbb222 (cyp/cyp-logger HEAD) not pre-warmed")
+	}
+
+	// Idempotent: a second run must not panic or duplicate work.
+	h.prewarmHeads()
+}
+
+// TestProbeCommitID_HitResolvesAndCaches verifies that a sha owned by exactly
+// one source is resolved by the probe and registered as an alias so later
+// requests for it hit the commit map directly.
+func TestProbeCommitID_HitResolvesAndCaches(t *testing.T) {
+	var calls atomic.Int32
+	repo := &mockProvider{repos: []source.Source{
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "deadbeef", getMetaCalls: &calls},
+		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "cafef00d", getMetaCalls: &calls},
+	}}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+
+	ref, ok := h.probeCommitID(context.Background(), "deadbeef")
+	if !ok || ref == nil || ref.owner != "cyp" || ref.module != "cyp-apis" {
+		t.Fatalf("probe should resolve deadbeef -> cyp/cyp-apis; ok=%v ref=%+v", ok, ref)
+	}
+
+	h.commitMu.RLock()
+	_, present := h.commitMap["deadbeef"]
+	h.commitMu.RUnlock()
+	if !present {
+		t.Error("probe hit did not register deadbeef as a commitMap alias")
+	}
+}
+
+// TestProbeCommitID_MissNegativeCaches verifies a bogus sha is reported as a
+// miss, recorded in the negative cache, and that a retry within TTL does NOT
+// re-probe (no extra upstream GetMeta calls).
+func TestProbeCommitID_MissNegativeCaches(t *testing.T) {
+	var calls atomic.Int32
+	repo := &mockProvider{repos: []source.Source{
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "real", getMetaCalls: &calls},
+	}}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+
+	ref, ok := h.probeCommitID(context.Background(), "bogus000")
+	if ok || ref != nil {
+		t.Fatalf("bogus sha should miss; got ok=%v ref=%+v", ok, ref)
+	}
+	if first := calls.Load(); first != 1 {
+		t.Fatalf("probe should issue exactly 1 GetMeta call on miss, got %d", first)
+	}
+	if !h.missCached("bogus000") {
+		t.Fatal("bogus sha not negative-cached after miss")
+	}
+
+	// Second call within TTL: must be served from the negative cache.
+	ref2, ok2 := h.probeCommitID(context.Background(), "bogus000")
+	if ok2 || ref2 != nil {
+		t.Fatalf("negative-cached sha should still miss; got ok=%v ref=%+v", ok2, ref2)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("negative-cache hit must not re-probe; GetMeta calls = %d, want 1", got)
+	}
+}
+
+// TestProbeCommitID_TransientNotNegativeCached verifies Fix 3: when every
+// source returns a transient error (timeout/cancel/network), the sha is NOT
+// negative-cached, so the next request retries instead of being locked out
+// for ProbeNegativeTTL.
+func TestProbeCommitID_TransientNotNegativeCached(t *testing.T) {
+	var calls atomic.Int32
+	repo := &mockProvider{repos: []source.Source{
+		// Even the owning source errors transiently (simulates upstream outage).
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "real", getMetaErr: context.DeadlineExceeded, getMetaCalls: &calls},
+	}}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+
+	if ref, ok := h.probeCommitID(context.Background(), "real"); ok || ref != nil {
+		t.Fatalf("transient failure should be a miss; got ok=%v ref=%+v", ok, ref)
+	}
+	if h.missCached("real") {
+		t.Fatal("transient miss must not be negative-cached")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("expected 1 GetMeta call, got %d", calls.Load())
+	}
+	// Retry: not negative-cached, so it probes again.
+	if _, ok := h.probeCommitID(context.Background(), "real"); ok {
+		t.Fatal("retry should still miss")
+	}
+	if calls.Load() != 2 {
+		t.Errorf("expected re-probe after transient (2 calls), got %d", calls.Load())
+	}
+}
+
+// TestServeDownload_NonHeadShaServesThatCommit verifies Fix 1: when a
+// Download resolves a non-HEAD sha (here via the probe), ServeDownload fetches
+// THAT sha's content, not HEAD's. Pins the headline correctness fix — without
+// it, the miss-branch fetched HEAD ("") and the client got the wrong commit.
+func TestServeDownload_NonHeadShaServesThatCommit(t *testing.T) {
+	const (
+		headSha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		oldSha  = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	var logBuf bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	p := &mockProvider{
+		meta: content.Meta{Commit: headSha, DefaultBranch: "main"},
+		byCommit: map[string]content.Meta{
+			headSha: {Commit: headSha},
+			oldSha:  {Commit: oldSha},
+		},
+		filesByCommit: map[string][]content.File{
+			headSha: {{Path: "head.proto", Data: []byte("HEAD-CONTENT")}},
+			oldSha:  {{Path: "old.proto", Data: []byte("OLD-CONTENT")}},
+		},
+		repos: []source.Source{
+			// A source that owns oldSha, so the probe resolves it.
+			&mockSource{owner: "cyp", repoName: "cyp-apis", commit: oldSha},
+		},
+	}
+	cfg := CommitResolution{
+		ProbeEnabled:     true,
+		ProbeTimeout:     time.Second,
+		ProbeNegativeTTL: time.Minute,
+	}
+	mux := testMuxWithConfig(p, log, cfg)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildDownloadRequest(oldSha)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1.DownloadService/Download",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body: %s; log: %s", resp.StatusCode, b, logBuf.String())
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if !bytes.Contains(respBody, []byte("OLD-CONTENT")) {
+		t.Errorf("response should serve oldSha's content (OLD-CONTENT); got %x", respBody)
+	}
+	if bytes.Contains(respBody, []byte("HEAD-CONTENT")) {
+		t.Errorf("response must NOT serve HEAD's content; got %x", respBody)
 	}
 }

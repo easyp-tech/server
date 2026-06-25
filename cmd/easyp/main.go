@@ -53,7 +53,16 @@ func main() {
 			bbProxy(log, cfg.Proxy.BitBucket),
 			githubProxy(log, cfg.Proxy.Github),
 		)
-		handler = connect.New(log, storage, cfg.Domain, connect.NewLoggingInterceptor(log))
+		handler = func() *http.ServeMux {
+			cc := cfg.Connect.WithDefaults()
+			return connect.NewWithConfig(log, storage, cfg.Domain, connect.CommitResolution{
+				PrewarmEnabled:   cc.Prewarm.Enabled != nil && *cc.Prewarm.Enabled,
+				PrewarmTimeout:   cc.Prewarm.PerCallTimeout,
+				ProbeEnabled:     cc.Probe.Enabled != nil && *cc.Probe.Enabled,
+				ProbeNegativeTTL: cc.Probe.NegativeTTL,
+				ProbeTimeout:     cc.Probe.PerCallTimeout,
+			}, connect.NewLoggingInterceptor(log))
+		}()
 		serve   = func() error { return http.ListenAndServe(cfg.Listen.String(), panicRecoveryMiddleware(log, loggingMiddleware(log, cfg.Domain, handler))) } //nolint:gosec
 	)
 
