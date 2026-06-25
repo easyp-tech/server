@@ -20,9 +20,9 @@ const (
 
 // AvailableBufVersions returns the list of buf version strings that have a
 // cached binary on disk under testdata/buf/. The list is discovered
-// dynamically (one directory per version) so that adding a new version to
-// the cache is enough to extend the matrix of E2E tests. Order is the
-// natural directory sort (lexicographic), which puts older versions first.
+// dynamically (one directory per version) so that adding a new version to the
+// cache is enough to extend the matrix of E2E tests. Order is the natural
+// directory sort (lexicographic), which puts older versions first.
 //
 // Returns an empty slice (without failing the test) when testdata/buf does
 // not exist. This is the common case on CI, where the cached binaries are
