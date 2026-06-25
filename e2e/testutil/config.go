@@ -32,6 +32,24 @@ type TestConfig struct {
 	LogLevel string
 }
 
+// githubTokenEnvVars is the ordered list of environment variable names that
+// may carry the GitHub API token. EASYP_GH_TOKEN is the current convention
+// (matches test.env and local-run.sh); EASYP_GITHUB_TOKEN is the legacy
+// spelling retained for back-compat. Lookup falls back to the next name if
+// the previous one is unset or empty.
+var githubTokenEnvVars = []string{"EASYP_GH_TOKEN", "EASYP_GITHUB_TOKEN"}
+
+// lookupGithubToken returns the first non-empty token from the canonical
+// env-var list. Returns "" if no candidate is set.
+func lookupGithubToken() string {
+	for _, name := range githubTokenEnvVars {
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // DefaultTestConfig returns a TestConfig populated from environment variables
 // and sensible defaults. Tests should call RequireEnvToken to ensure the
 // GitHub token is present before using this config with StartServer.
@@ -40,7 +58,7 @@ func DefaultTestConfig() TestConfig {
 	return TestConfig{
 		TLSCertPath: filepath.Join(home, "local-tls", "server", "server-cert.pem"),
 		TLSKeyPath:  filepath.Join(home, "local-tls", "server", "server-key.pem"),
-		GithubToken: os.Getenv("EASYP_GITHUB_TOKEN"),
+		GithubToken: lookupGithubToken(),
 		RepoOwner:   "googleapis",
 		RepoName:    "googleapis",
 		RepoPaths:   []string{"google/type/"},

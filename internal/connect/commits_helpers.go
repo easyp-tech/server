@@ -1,6 +1,8 @@
 package connect
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -9,6 +11,37 @@ import (
 type moduleRef struct {
 	owner  string
 	module string
+}
+
+// commitUUID returns the buf-style 32-character dashless UUID for a git
+// commit SHA. The buf CLI (v1.32+) validates the commit id with
+// uuidutil.FromDashless, which requires exactly 32 hex characters and
+// rejects anything else — including a raw 40-char git SHA — with
+// "expected dashless uuid to be of length 32 but was 40".
+//
+// We synthesize a stable UUIDv4-shaped id from the SHA-256 of the input
+// commit. SHA-256 is overkill for non-security id-minting but lets us
+// reuse the stdlib without pulling google/uuid. The version nibble (4) and
+// RFC 4122 variant bits are stamped in so the result round-trips through
+// the buf client's parser as a syntactically-valid UUID.
+//
+// Determinism is the property that matters: the same git SHA must always
+// map to the same UUID within a process and across processes, so that a
+// client caching the id from one buf dep update finds it again on the
+// next. A random UUID per call would force the client to re-resolve on
+// every restart and break foreign-id caching in buf.lock.
+func commitUUID(gitSHA string) string {
+	if gitSHA == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(gitSHA))
+	var uuid [16]byte
+	copy(uuid[:], sum[:16])
+	// Set version 4 (random) in the high nibble of byte 6.
+	uuid[6] = (uuid[6] & 0x0f) | 0x40
+	// Set variant RFC 4122 in the high two bits of byte 8.
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
+	return hex.EncodeToString(uuid[:])
 }
 
 func parseResourceRefs(msg []byte) []moduleRef {

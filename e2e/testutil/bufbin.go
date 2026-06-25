@@ -18,8 +18,33 @@ const (
 	BufV169 = "v1.69.0"
 )
 
-// GetBuf returns the path to a pinned buf binary, downloading it from GitHub
-// Releases on cache miss. Binaries are cached at testdata/buf/{version}/buf.
+// AvailableBufVersions returns the list of buf version strings that have a
+// cached binary on disk under testdata/buf/. The list is discovered
+// dynamically (one directory per version) so that adding a new version to
+// the cache is enough to extend the matrix of E2E tests. Order is the
+// natural directory sort (lexicographic), which puts older versions first.
+func AvailableBufVersions(t *testing.T) []string {
+	t.Helper()
+
+	projectRoot := findProjectRoot(t)
+	dir := filepath.Join(projectRoot, "testdata", "buf")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading testdata/buf: %v", err)
+	}
+
+	versions := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		bin := filepath.Join(dir, e.Name(), "buf")
+		if info, err := os.Stat(bin); err == nil && !info.IsDir() {
+			versions = append(versions, e.Name())
+		}
+	}
+	return versions
+}
 //
 // Checksum verification is intentionally skipped: the download uses HTTPS from
 // GitHub's CDN which provides transport integrity. The binaries are used only
@@ -70,14 +95,26 @@ func GetBuf(t *testing.T, version string) string {
 
 // RequireEnvToken reads an environment variable and skips the test if it is
 // empty. Returns the token value. Use this for required test secrets like
-// EASYP_GITHUB_TOKEN.
+// EASYP_GH_TOKEN (current) or EASYP_GITHUB_TOKEN (legacy).
 func RequireEnvToken(t *testing.T, envVar string) string {
 	t.Helper()
 	val := os.Getenv(envVar)
-	if val == "" {
-		t.Skipf("%s not set -- skipping test", envVar)
+	if val != "" {
+		return val
 	}
-	return val
+	// Fall back to the next name in the canonical list, in order, until one
+	// resolves. Lets a single token (the modern EASYP_GH_TOKEN) satisfy tests
+	// that ask for either spelling.
+	for _, name := range githubTokenEnvVars {
+		if name == envVar {
+			continue
+		}
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+	}
+	t.Skipf("%s (or EASYP_GH_TOKEN / EASYP_GITHUB_TOKEN) not set -- skipping test", envVar)
+	return ""
 }
 
 // capitalizeOS maps runtime.GOOS to the casing used in buf release asset names.
