@@ -141,7 +141,7 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		cid := meta.Commit
+		cid := commitUUID(meta.Commit)
 		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
 			slog.String("handler", "ServeHTTP"),
 			slog.String("procedure", "CommitService/GetCommits"),
@@ -333,7 +333,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		cid := meta.Commit
+		cid := commitUUID(meta.Commit)
 		digest, err := h.computeB4Digest(r, ref, meta.Commit)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("computing digest for %s/%s", ref.owner, ref.module),
@@ -651,7 +651,7 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		cid = meta.Commit
+		cid = commitUUID(meta.Commit)
 		digest, _ = h.computeB4DigestFromFiles(files)
 		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
 		if isV1 {
@@ -734,7 +734,7 @@ func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, c
 	if err != nil {
 		return nil, err
 	}
-	cid := commit
+	cid := commitUUID(commit)
 	h.commitMu.Lock()
 	h.filesMap[cid] = files
 	h.commitMu.Unlock()
@@ -873,17 +873,27 @@ func (h *commitServiceHandler) resolveForeignCommitID(commitID string) *moduleRe
 // Download would serve a zero digest.
 func (h *commitServiceHandler) registerResolved(sha, owner, module string) {
 	key := owner + "/" + module
+	// The buf client now expects a 32-char dashless UUID; the SHA is only
+	// useful as a key for talking to upstream git. Register BOTH so the
+	// prewarm path makes the UUID the buf client will send hit commitMap
+	// directly on the first Download, and the SHA alias preserves a
+	// working lookup for any caller (probe, future debug tool) that
+	// happens to send a raw sha.
+	uuid := commitUUID(sha)
 	h.commitMu.Lock()
-	h.commitMap[sha] = moduleRef{owner: owner, module: module}
+	h.commitMap[uuid] = moduleRef{owner: owner, module: module}
+	if sha != "" && sha != uuid {
+		h.commitMap[sha] = moduleRef{owner: owner, module: module}
+	}
 	if existing, ok := h.infoCache[key]; ok {
-		existing.commitID = sha
+		existing.commitID = uuid
 		existing.commit = sha
 		existing.ownerID = owner
 		existing.moduleID = key
 		h.infoCache[key] = existing
 	} else {
 		h.infoCache[key] = commitInfoCache{
-			commitID: sha,
+			commitID: uuid,
 			commit:   sha,
 			ownerID:  owner,
 			moduleID: key,

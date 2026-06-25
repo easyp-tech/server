@@ -18,6 +18,55 @@ const (
 	BufV169 = "v1.69.0"
 )
 
+// AvailableBufVersions returns the list of buf version strings that have a
+// cached binary on disk under testdata/buf/. The list is discovered
+// dynamically (one directory per version) so that adding a new version to
+// the cache is enough to extend the matrix of E2E tests. Order is the
+// natural directory sort (lexicographic), which puts older versions first.
+//
+// Returns an empty slice (without failing the test) when testdata/buf does
+// not exist. This is the common case on CI, where the cached binaries are
+// gitignored: callers should treat len(versions)==0 as "no binaries to test
+// against" and t.Skip() rather than fataling. The directory being unreadable
+// for a different reason (permission denied, etc.) is still a hard error.
+func AvailableBufVersions(t *testing.T) []string {
+	t.Helper()
+
+	projectRoot := findProjectRoot(t)
+	dir := filepath.Join(projectRoot, "testdata", "buf")
+
+	// A missing testdata/buf is the expected state on CI (binaries are
+	// gitignored) and on a fresh checkout. Treat it as "no versions
+	// available" so matrix tests can skip rather than fail the whole run.
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatalf("stat testdata/buf: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("testdata/buf is not a directory: %s", dir)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading testdata/buf: %v", err)
+	}
+
+	versions := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		bin := filepath.Join(dir, e.Name(), "buf")
+		if info, err := os.Stat(bin); err == nil && !info.IsDir() {
+			versions = append(versions, e.Name())
+		}
+	}
+	return versions
+}
+
 // GetBuf returns the path to a pinned buf binary, downloading it from GitHub
 // Releases on cache miss. Binaries are cached at testdata/buf/{version}/buf.
 //
@@ -70,14 +119,26 @@ func GetBuf(t *testing.T, version string) string {
 
 // RequireEnvToken reads an environment variable and skips the test if it is
 // empty. Returns the token value. Use this for required test secrets like
-// EASYP_GITHUB_TOKEN.
+// EASYP_GH_TOKEN (current) or EASYP_GITHUB_TOKEN (legacy).
 func RequireEnvToken(t *testing.T, envVar string) string {
 	t.Helper()
 	val := os.Getenv(envVar)
-	if val == "" {
-		t.Skipf("%s not set -- skipping test", envVar)
+	if val != "" {
+		return val
 	}
-	return val
+	// Fall back to the next name in the canonical list, in order, until one
+	// resolves. Lets a single token (the modern EASYP_GH_TOKEN) satisfy tests
+	// that ask for either spelling.
+	for _, name := range githubTokenEnvVars {
+		if name == envVar {
+			continue
+		}
+		if v := os.Getenv(name); v != "" {
+			return v
+		}
+	}
+	t.Skipf("%s (or EASYP_GH_TOKEN / EASYP_GITHUB_TOKEN) not set -- skipping test", envVar)
+	return ""
 }
 
 // capitalizeOS maps runtime.GOOS to the casing used in buf release asset names.
