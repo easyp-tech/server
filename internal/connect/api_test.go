@@ -274,7 +274,7 @@ func TestV1RoutesRegistered(t *testing.T) {
 func TestV1RoutesNotReachingRootHandler(t *testing.T) {
 	p := &mockProvider{
 		meta: content.Meta{
-			Commit:        "abc123",
+			Commit:        "abc1230000000000000000000000000000000000",
 			DefaultBranch: "main",
 		},
 		files: []content.File{
@@ -316,7 +316,7 @@ func TestV1RoutesNotReachingRootHandler(t *testing.T) {
 func TestCommitServiceV1ReturnsProtobuf(t *testing.T) {
 	p := &mockProvider{
 		meta: content.Meta{
-			Commit:        "deadbeef",
+			Commit:        "deadbeef00000000000000000000000000000000",
 			DefaultBranch: "main",
 		},
 		files: []content.File{
@@ -363,7 +363,7 @@ func TestCommitServiceV1ReturnsProtobuf(t *testing.T) {
 func TestGraphServiceV1ReturnsProtobuf(t *testing.T) {
 	p := &mockProvider{
 		meta: content.Meta{
-			Commit:        "cafe1234",
+			Commit:        "cafe123400000000000000000000000000000000",
 			DefaultBranch: "main",
 		},
 		files: []content.File{
@@ -420,7 +420,7 @@ func TestGraphServiceV1ReturnsProtobuf(t *testing.T) {
 func TestDownloadServiceV1ReturnsProtobuf(t *testing.T) {
 	p := &mockProvider{
 		meta: content.Meta{
-			Commit:        "f00dcafe",
+			Commit:        "f00dcafe00000000000000000000000000000000",
 			DefaultBranch: "main",
 		},
 		files: []content.File{
@@ -589,6 +589,13 @@ func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 			respBody, _ := io.ReadAll(resp.Body)
 			if !bytes.Contains(respBody, []byte("unknown commit id")) {
 				t.Errorf("body %q does not mention 'unknown commit id'", respBody)
+			}
+			// Per D-12: the 400 message names the recovery action
+			// explicitly so an operator reading the log can see whether the
+			// failure is "client forgot GetCommits" or "client is on an
+			// older buf.lock and needs to re-resolve".
+			if !bytes.Contains(respBody, []byte("re-run buf mod update / buf dep update")) {
+				t.Errorf("body %q does not mention 're-run buf mod update / buf dep update' (D-12 message)", respBody)
 			}
 
 			logLine := logBuf.String()
@@ -1359,8 +1366,8 @@ func newTestCommitHandler(repo provider) *commitServiceHandler {
 // of that sha hits without a prior in-session GetCommits.
 func TestPrewarmHeads_PopulatesCommitMap(t *testing.T) {
 	repo := &mockProvider{repos: []source.Source{
-		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "aaa111"},
-		&mockSource{owner: "cyp", repoName: "cyp-logger", commit: "bbb222"},
+		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "aaa1110000000000000000000000000000000000"},
+		&mockSource{owner: "cyp", repoName: "cyp-logger", commit: "bbb2220000000000000000000000000000000000"},
 	}}
 	h := newTestCommitHandler(repo)
 	h.prewarmEnabled = true
@@ -1368,16 +1375,16 @@ func TestPrewarmHeads_PopulatesCommitMap(t *testing.T) {
 	h.prewarmHeads() // synchronous (sync.Once guards the goroutine-launched path)
 
 	h.commitMu.RLock()
-	ref, ok := h.commitMap["aaa111"]
+	ref, ok := h.commitMap["aaa1110000000000000000000000000000000000"]
 	h.commitMu.RUnlock()
 	if !ok || ref.owner != "googleapis" || ref.module != "googleapis" {
-		t.Fatalf("aaa111 not resolved to googleapis/googleapis; ok=%v ref=%+v", ok, ref)
+		t.Fatalf("aaa111... not resolved to googleapis/googleapis; ok=%v ref=%+v", ok, ref)
 	}
 	h.commitMu.RLock()
-	_, ok = h.commitMap["bbb222"]
+	_, ok = h.commitMap["bbb2220000000000000000000000000000000000"]
 	h.commitMu.RUnlock()
 	if !ok {
-		t.Fatal("bbb222 (cyp/cyp-logger HEAD) not pre-warmed")
+		t.Fatal("bbb222... (cyp/cyp-logger HEAD) not pre-warmed")
 	}
 
 	// Idempotent: a second run must not panic or duplicate work.
@@ -1390,22 +1397,22 @@ func TestPrewarmHeads_PopulatesCommitMap(t *testing.T) {
 func TestProbeCommitID_HitResolvesAndCaches(t *testing.T) {
 	var calls atomic.Int32
 	repo := &mockProvider{repos: []source.Source{
-		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "deadbeef", getMetaCalls: &calls},
-		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "cafef00d", getMetaCalls: &calls},
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "deadbeef00000000000000000000000000000000", getMetaCalls: &calls},
+		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "cafef00d00000000000000000000000000000000", getMetaCalls: &calls},
 	}}
 	h := newTestCommitHandler(repo)
 	h.probeEnabled = true
 
-	ref, ok := h.probeCommitID(context.Background(), "deadbeef")
+	ref, ok := h.probeCommitID(context.Background(), "deadbeef00000000000000000000000000000000")
 	if !ok || ref == nil || ref.owner != "cyp" || ref.module != "cyp-apis" {
-		t.Fatalf("probe should resolve deadbeef -> cyp/cyp-apis; ok=%v ref=%+v", ok, ref)
+		t.Fatalf("probe should resolve deadbeef... -> cyp/cyp-apis; ok=%v ref=%+v", ok, ref)
 	}
 
 	h.commitMu.RLock()
-	_, present := h.commitMap["deadbeef"]
+	_, present := h.commitMap["deadbeef00000000000000000000000000000000"]
 	h.commitMu.RUnlock()
 	if !present {
-		t.Error("probe hit did not register deadbeef as a commitMap alias")
+		t.Error("probe hit did not register deadbeef... as a commitMap alias")
 	}
 }
 

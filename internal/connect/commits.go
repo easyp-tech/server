@@ -396,7 +396,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		// GetModules -> GetGraph -> Download) finds the commit_id without first
 		// requiring CommitService/GetCommits. Without this, ServeDownload's
 		// commit_id_lookup branch returns ref_found=false and replies 400
-		// "unknown commit id: must call CommitService/GetCommits first".
+		// "unknown commit id: re-run buf mod update / buf dep update".
 		h.commitMu.Lock()
 		h.commitMap[cid] = ref
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
@@ -579,7 +579,7 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		// Truly unresolvable: no commitMap hit and no module identity we can
 		// fall back to. Surface that explicitly, including the id itself so
 		// operators can correlate with prior GetCommits traffic.
-		h.badRequest(r, w, "unknown commit id: must call CommitService/GetCommits first",
+		h.badRequest(r, w, "unknown commit id: re-run buf mod update / buf dep update",
 			slog.String("commit_id", commitID),
 			slog.Int("body_bytes", len(body)))
 		return
