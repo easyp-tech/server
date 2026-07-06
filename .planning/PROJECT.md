@@ -85,4 +85,4 @@ The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI 
 This document evolves at phase transitions and milestone boundaries.
 
 ---
-*Last updated: 2026-06-16 after v1.3 milestone start*
+*Last updated: 2026-07-06 after v1.3 milestone completion (Phases 11–16, including Phase 16 commit-id format cutover)*
