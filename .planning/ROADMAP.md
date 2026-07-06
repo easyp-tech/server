@@ -39,65 +39,94 @@
 - [ ] **Phase 13: Error Path Logging** — Structured error context on all v1beta1/v1 handler failures
 - [ ] **Phase 14: Provider Logging** — Debug-level tracing for GitHub provider and Artifactory cache operations
 - [ ] **Phase 15: Operational Logging** — Panic recovery middleware with full stack trace
+- [ ] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log
 
 ## Phase Details
 
 ### Phase 11: Logging Foundation
+
 **Goal**: Operators can configure log level, format, and source info, with centralized sensitive-data redaction applied to all log output
 **Depends on**: Nothing (foundation phase)
 **Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04
 **Success Criteria** (what must be TRUE):
+
   1. Setting `EASYP_LOG_LEVEL=debug` produces debug-level log lines; default (no env var) logs at info level
   2. Sensitive fields (tokens, passwords) are automatically redacted from every log entry via `slog.HandlerOptions.ReplaceAttr` — no sensitive data appears in any output
   3. Setting `EASYP_LOG_FORMAT=json` produces JSON-formatted log output; default is human-readable text
   4. Enabling `AddSource` in config includes source file and line number in log entries
   5. Invalid log level values produce a clear error message at startup and exit gracefully
+
 **Plans**: TBD
 
 ### Phase 12: Logging Infrastructure
+
 **Goal**: Every request is traceable via correlation ID, and v1alpha1 handlers are instrumented via a single Connect RPC unary interceptor
 **Depends on**: Phase 11
 **Requirements**: INFR-01, INFR-02, INFR-03
 **Success Criteria** (what must be TRUE):
+
   1. Every log line in the request lifecycle includes a `request_id` (either from `X-Request-Id` header or auto-generated 8-byte hex)
   2. Logs from concurrent requests are distinguishable by their unique `request_id`
   3. v1alpha1 handler procedures (blobs, modulepins, bynames) produce structured log entries with procedure, peer, duration, request/response size, and error code via a single unary interceptor — zero handler code changes
   4. HTTP middleware logs timing and status at INFO level only — error-level logging is removed from middleware to prevent double-logging with handler-level logs
   5. Error logs from handler code include the `request_id` linking them to the originating request via context propagation
+
 **Plans**: TBD
 
 ### Phase 13: Error Path Logging — v1beta1/v1 Handlers
+
 **Goal**: Every failure in v1beta1/v1 raw handlers produces a structured log entry with full request context and consistent attribute naming
 **Depends on**: Phase 12
 **Requirements**: ERR-01, ERR-02, ERR-03, ERR-04, ERR-05
 **Success Criteria** (what must be TRUE):
+
   1. `ServeHTTP` (CommitService) failure logs include owner, repo, error, and request_id
   2. `ServeGraph` (GraphService) failure logs include owner, module, error, and request_id
   3. `ServeDownload` (DownloadService) failure logs include owner, module, commit, error, and request_id
   4. `ServeGetModules` (ModuleService) failure logs include owner, module, error, and request_id
   5. All handler-level error logs use consistent attribute names (`protocol`, `owner`, `repo`, `commit`, `request_id`, `error`) and include `protocol: "v1beta1"` — no naming inconsistencies across handlers
+
 **Plans**: TBD
 
 ### Phase 14: Provider Logging
+
 **Goal**: Provider API calls and cache operations are traceable at debug level with timing, status, and provider-type context
 **Depends on**: Phase 12
 **Requirements**: PROV-01, PROV-02
 **Success Criteria** (what must be TRUE):
+
   1. GitHub provider HTTP requests log before and after each API call with redacted URL, method, response status, and duration at debug level
   2. Artifactory cache operations log hit/miss with duration at debug level
   3. Cache error logs distinguish context cancellation (client disconnected) from API errors (upstream failure)
   4. Provider log lines include a `provider_type` attribute (e.g., `github`, `artifactory`) for filtering
+
 **Plans**: TBD
 
 ### Phase 15: Operational Logging — Panic Recovery
+
 **Goal**: Unhandled panics are caught, logged with full stack trace, and return HTTP 500 instead of crashing the process
 **Depends on**: Phase 11
 **Requirements**: OPS-01
 **Success Criteria** (what must be TRUE):
+
   1. A panic anywhere in the request handling chain is caught by recovery middleware wrapping the entire ServeMux
   2. The panic is logged with full stack trace including goroutine information and request context
   3. The client receives an HTTP 500 response instead of a connection reset or process termination
   4. Other concurrent requests continue unaffected when one request panics
+
+**Plans**: TBD
+
+### Phase 16: Commit ID Resolution Improvements
+
+**Goal**: Make commit-id resolution more robust (accept short git SHAs, fall back to upstream probe on cache miss) and the not-found failure mode diagnosable (clear error response and structured log line)
+**Depends on**: Phase 15
+**Requirements**: TBD
+**Success Criteria** (what must be TRUE):
+
+  1. The minted commit id is the first 16 bytes of the git SHA (no SHA-256 derivation), and a unit test verifies that both full 40-char and short (7-char) git SHAs round-trip through `commitUUID` deterministically
+  2. When a `DownloadService/Download` request carries a commit id that is not in `commitMap` and the proxy serves multiple modules, the handler probes every configured source for the sha and uses the first match — single-source deployments keep the existing `resolveForeignCommitID` fast path
+  3. The 400 response returned for an unresolvable commit id names the id itself in both the wire body and the structured log line, so an operator can correlate a client-side "unknown commit id" with a prior `GetCommits` log entry without re-reading the request
+
 **Plans**: TBD
 
 ## Progress
@@ -119,6 +148,8 @@
 | 13. Error Path Logging        | v1.3 | 0/0 | Not started | - |
 | 14. Provider Logging          | v1.3 | 0/0 | Not started | - |
 | 15. Operational Logging       | v1.3 | 0/0 | Not started | - |
+| 16. Commit ID Resolution Improvements | v1.3 | 0/0 | Not started | - |
 
 ---
+
 *Roadmap last updated: 2026-06-16*
