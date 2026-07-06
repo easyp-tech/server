@@ -39,7 +39,7 @@
 - [ ] **Phase 13: Error Path Logging** — Structured error context on all v1beta1/v1 handler failures
 - [ ] **Phase 14: Provider Logging** — Debug-level tracing for GitHub provider and Artifactory cache operations
 - [ ] **Phase 15: Operational Logging** — Panic recovery middleware with full stack trace
-- [ ] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log
+- [x] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log (completed 2026-07-06)
 
 ## Phase Details
 
@@ -148,7 +148,7 @@
 | 13. Error Path Logging        | v1.3 | 0/0 | Not started | - |
 | 14. Provider Logging          | v1.3 | 0/0 | Not started | - |
 | 15. Operational Logging       | v1.3 | 0/0 | Not started | - |
-| 16. Commit ID Resolution Improvements | v1.3 | 0/0 | Not started | - |
+| 16. Commit ID Resolution Improvements | v1.3 | 3/3 | Complete   | 2026-07-06 |
 
 ---
 
