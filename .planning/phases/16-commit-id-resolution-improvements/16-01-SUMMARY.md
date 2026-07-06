@@ -159,6 +159,14 @@ None - no external service configuration required.
 - No new external dependencies were introduced (Rule 3 is satisfied — no `go get` invocations).
 - No blockers for plan 16-02. The worktree is clean and ready for the next plan to start from this branch state.
 
+## Self-Check: PASSED
+
+- All 3 modified files found: `internal/connect/commits_helpers.go`, `internal/connect/commits_helpers_test.go`, `internal/connect/uuid_format_test.go`.
+- All 3 commits present in branch: `2ff6157` (refactor), `3a5db9c` (test), `2c44173` (docs).
+- No modifications to shared orchestrator files (`STATE.md`, `ROADMAP.md`, `REQUIREMENTS.md`).
+- `gofmt -e` clean on all 3 source files.
+- Helper logic verified via standalone test program (full test build cannot run until `commits.go` is fixed by plan 16-02).
+
 ---
 *Phase: 16-commit-id-resolution-improvements*
 *Completed: 2026-07-06*
