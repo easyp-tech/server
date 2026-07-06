@@ -1,8 +1,8 @@
 package connect
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -19,29 +19,54 @@ type moduleRef struct {
 // rejects anything else — including a raw 40-char git SHA — with
 // "expected dashless uuid to be of length 32 but was 40".
 //
-// We synthesize a stable UUIDv4-shaped id from the SHA-256 of the input
-// commit. SHA-256 is overkill for non-security id-minting but lets us
-// reuse the stdlib without pulling google/uuid. The version nibble (4) and
-// RFC 4122 variant bits are stamped in so the result round-trips through
-// the buf client's parser as a syntactically-valid UUID.
+// The 16-byte UUID is built from the first 14 bytes of the decoded 20-byte
+// git SHA plus the standard UUID version-4 and RFC 4122 variant bits at
+// positions 6 and 8. SHA bytes 14-19 are not represented in the id; the
+// inverse (UUID -> SHA prefix) recovers sha[0..13]. The result is
+// hex-encoded to 32 lowercase chars, a syntactically-valid dashless UUID.
 //
 // Determinism is the property that matters: the same git SHA must always
 // map to the same UUID within a process and across processes, so that a
 // client caching the id from one buf dep update finds it again on the
 // next. A random UUID per call would force the client to re-resolve on
 // every restart and break foreign-id caching in buf.lock.
-func commitUUID(gitSHA string) string {
-	if gitSHA == "" {
-		return ""
+//
+// Input contract: the input must be exactly 40 lowercase hex characters
+// (the standard full-length git SHA-1 representation). Anything else
+// returns ("", error). Production callers always pass full SHAs from
+// upstream GetMeta, so any non-conforming input is a contract violation.
+func commitUUID(gitSHA string) (string, error) {
+	if len(gitSHA) != 40 {
+		return "", errors.New("commitUUID: input is not 40 lowercase hex characters")
 	}
-	sum := sha256.Sum256([]byte(gitSHA))
-	var uuid [16]byte
-	copy(uuid[:], sum[:16])
-	// Set version 4 (random) in the high nibble of byte 6.
-	uuid[6] = (uuid[6] & 0x0f) | 0x40
-	// Set variant RFC 4122 in the high two bits of byte 8.
-	uuid[8] = (uuid[8] & 0x3f) | 0x80
-	return hex.EncodeToString(uuid[:])
+	sha, err := hex.DecodeString(gitSHA)
+	if err != nil {
+		return "", errors.New("commitUUID: input is not 40 lowercase hex characters")
+	}
+	var result [16]byte
+	// SHA bytes 0..5 -> result bytes 0..5.
+	copy(result[0:6], sha[0:6])
+	// Result byte 6 = UUID version-4 nibble (high nibble = 4, low nibble = 0).
+	result[6] = 0x40
+	// SHA byte 6 -> result byte 7.
+	result[7] = sha[6]
+	// Result byte 8 = RFC 4122 variant bits (high two bits = 10, low six bits = 0).
+	result[8] = 0x80
+	// SHA bytes 7..13 -> result bytes 9..15.
+	copy(result[9:16], sha[7:14])
+	return hex.EncodeToString(result[:]), nil
+}
+
+// preResolveForTest is a test fixture that right-pads a short hex string
+// with '0' until it is exactly 40 characters. If the input is already 40
+// or more characters, it is returned unchanged. This lets unit tests
+// exercise commitUUID with short SHA prefixes (7-byte, 14-byte) that
+// production callers never see directly.
+func preResolveForTest(short string) string {
+	if len(short) >= 40 {
+		return short[:40]
+	}
+	return short + strings.Repeat("0", 40-len(short))
 }
 
 func parseResourceRefs(msg []byte) []moduleRef {
