@@ -1,16 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: Diagnostic Logging
+milestone_name: Diagnostic Logging — In Progress
 status: planning
-last_updated: "2026-06-18T17:32:59.092Z"
-last_activity: "2026-06-16 — Roadmap created for v1.3 Diagnostic Logging (5 phases: 11-15)"
+stopped_at: Phase 16 context gathered
+last_updated: "2026-07-06T11:07:46.357Z"
+last_activity: "2026-07-06 — Phase 16 added: Commit ID Resolution Improvements"
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 5
   total_plans: 5
   completed_plans: 5
-  percent: 100
+  percent: 83
 ---
 
 # Project State
@@ -25,10 +26,10 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 ## Current Position
 
-Phase: 11 of 15 (Logging Foundation)
+Phase: 11 of 16 (Logging Foundation)
 Plan: None yet
 Status: Ready to plan
-Last activity: 2026-06-16 — Roadmap created for v1.3 Diagnostic Logging (5 phases: 11-15)
+Last activity: 2026-07-06 — Phase 16 added: Commit ID Resolution Improvements
 
 Progress: [                    ] 0%
 
@@ -61,6 +62,7 @@ Recent decisions affecting current work:
 - [Roadmap]: 5 phases for v1.3, numbered 11-15 (continuing from v1.2)
 - [Roadmap]: Phase ordering follows dependency chain — Foundation before Infrastructure before handler logging
 - [Roadmap]: OPS-01 (panic recovery) placed in its own phase since it's a distinct infrastructure concern with no handler-level dependency
+- [Roadmap]: Phase 16 (Commit ID Resolution Improvements) added 2026-07-06 — three items bundled into one phase: drop SHA-256 derivation in favor of first-16-bytes of git SHA (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log
 
 ### Pending Todos
 
@@ -69,6 +71,10 @@ None yet.
 ### Blockers/Concerns
 
 None yet.
+
+### Roadmap Evolution
+
+- Phase 16 added: предлагаю изменения — use first 16 bytes of git commit id, probe all repos on miss, fix unclear not-found error message
 
 ## Deferred Items
 
@@ -82,6 +88,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-18T17:32:59.075Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-logging-foundation/11-CONTEXT.md
+Last session: 2026-07-06T11:07:46.339Z
+Stopped at: Phase 16 context gathered
+Resume file: .planning/phases/16-commit-id-resolution-improvements/16-CONTEXT.md
