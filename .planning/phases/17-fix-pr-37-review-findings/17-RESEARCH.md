@@ -562,22 +562,15 @@ Also update the comment at commits.go:399 to match.
 | A7 | The 32-char-on-miss case in finding #6 is still a valid regression path after Phase 17 | Finding #6 | After Phase 17, `commitUUID` accepts 40 or 64 chars — a 32-char input is still rejected. The `registerResolved` no-op behavior is unchanged. **Mitigation:** A7 is correct. |
 | A8 | No CLAUDE.md exists at the repo root | Project context | If a CLAUDE.md is added in the future, the planner should re-read it before execution. **Mitigation:** verified absent at the time of research. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **What is the exact text of the softened 400 message?**
-   - What we know: The review (review.md:13-14) suggests "keep a generic tail or split the message by miss-class"; SC-4 (ROADMAP.md:166) requires the message remain generic.
-   - What's unclear: The user has not picked a specific string.
-   - Recommendation: Use `"unknown commit id: re-resolve via buf mod update / buf dep update"` (drop "re-run" → "re-resolve via" to soften the prescriptive tone). If the user wants a different wording, the planner should surface the question in `gsd-discuss-phase` or in the plan's `<questions>` block.
+All open questions raised during research were resolved during planning. Resolutions are documented in `17-01-PLAN.md` `<questions>` block and inherited below for traceability.
 
-2. **Should finding #5 (threading `cid` into `computeB4Digest`) be in scope?**
-   - What we know: The review verdict (review.md:23) marks it as "cleanups that can land separately"; the ROADMAP SCs do not mention it; including it is a natural side-effect of finding #1's refactor.
-   - What's unclear: Whether the user wants it.
-   - Recommendation: Include it in the same plan as findings #1, #2, #3 with a clear note that it's a "low-risk cleanup included because the call sites are being rewritten anyway". If the user objects, drop it — the only cost is 2 extra `commitUUID` calls per request and a dead-path inside `computeB4Digest`.
+1. **RESOLVED — Exact text of the softened 400 message (SC-5 / finding #4):** Use the literal string `"unknown commit id: re-resolve via buf mod update / buf dep update"` (drop "re-run" → "re-resolve via" to soften the prescriptive tone). The "unknown commit id" prefix is preserved (so the existing grep-friendly hooks at `api_test.go:590` and `uuid_format_test.go:209` continue to pass without change). The exact substring must be present in three locations: `commits.go:582` (wire body), `api_test.go:597` (assertion), `uuid_format_test.go:215` (assertion). The comment at `commits.go:399` is updated to match.
 
-3. **Should finding #6 (probe/register cache contract) be a follow-up?**
-   - What we know: The review verdict (review.md:17-18) marks it as low-impact; not in ROADMAP SCs; the regression requires a 32-char sha from a real provider (rare).
-   - What's unclear: Whether the user wants it tracked.
-   - Recommendation: Note in the plan as a "known-issue-carried-forward" with a one-line description. Do not include in this plan's tasks.
+2. **RESOLVED — Include finding #5 (threading `cid` into `computeB4Digest`)?** Yes — fold it into Task 1 alongside the `internalError` refactor. The review verdict calls it a "cleanup that can land separately" but the call sites are being rewritten for SC-1/SC-2 anyway; threading the parameter through costs ~5 extra lines and removes a dead-path that the surrounding code already wrestles with. Trade-off: one extra `cid string` parameter on `computeB4Digest`; the function body uses the passed-in `cid` for `h.filesMap[cid] = files` at line 758 instead of re-deriving it.
+
+3. **RESOLVED — Track finding #6 (probe/register cache contract divergence) as follow-up?** Yes — defer. Note in the plan's "Deferred" section as a one-line known-issue-carried-forward. After Phase 17, the 32-char-hex path is still rejected by `commitUUID` (40/64 only), so the regression remains structurally. Real-world impact is low (no known provider returns 32-char hex shas); tracking without a code change is the right call. Tracked in plan `<threat_model>` as T-17-DEFER.
 
 ## Environment Availability
 
