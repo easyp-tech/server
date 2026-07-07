@@ -169,6 +169,7 @@ Plans:
 | 15. Operational Logging       | v1.3 | 0/0 | Not started | - |
 | 16. Commit ID Resolution Improvements | v1.3 | 3/3 | Complete    | 2026-07-06 |
 | 17. Fix PR #37 review findings | v1.3 | 1/1 | Complete | 2026-07-07 |
+| 18. Respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic | v1.3 | 1/1 | Complete | 2026-07-07 |
 
 ### Phase 18: Respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
 
@@ -187,7 +188,7 @@ Plans:
 Plans:
 Plans:
 
-- [ ] TBD (run /gsd-plan-phase 18 to break down)
+- [x] [18-01](./phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-PLAN.md) — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe
 
 ---
 
