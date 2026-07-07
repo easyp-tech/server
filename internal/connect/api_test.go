@@ -594,8 +594,8 @@ func TestBadRequest_OnUnknownCommitID(t *testing.T) {
 			// explicitly so an operator reading the log can see whether the
 			// failure is "client forgot GetCommits" or "client is on an
 			// older buf.lock and needs to re-resolve".
-			if !bytes.Contains(respBody, []byte("re-run buf mod update / buf dep update")) {
-				t.Errorf("body %q does not mention 're-run buf mod update / buf dep update' (D-12 message)", respBody)
+			if !bytes.Contains(respBody, []byte("re-resolve via buf mod update / buf dep update")) {
+				t.Errorf("body %q does not mention 're-resolve via buf mod update / buf dep update' (D-12 message)", respBody)
 			}
 
 			logLine := logBuf.String()

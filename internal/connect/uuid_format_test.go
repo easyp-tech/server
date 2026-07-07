@@ -212,8 +212,8 @@ func TestServeDownload_UnknownCommitID_ReturnsBadRequest(t *testing.T) {
 	// Per D-12: the 400 message names the recovery action explicitly so an
 	// operator reading the log can see whether the failure is "client forgot
 	// GetCommits" or "client is on an older buf.lock and needs to re-resolve".
-	if !strings.Contains(string(body), "re-run buf mod update / buf dep update") {
-		t.Errorf("body does not contain \"re-run buf mod update / buf dep update\" (D-12 message); got: %s", body)
+	if !strings.Contains(string(body), "re-resolve via buf mod update / buf dep update") {
+		t.Errorf("body does not contain \"re-resolve via buf mod update / buf dep update\" (D-12 message); got: %s", body)
 	}
 }
 
