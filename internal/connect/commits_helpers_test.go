@@ -296,6 +296,18 @@ func TestCommitUUID_InverseRecovery(t *testing.T) {
 	}
 }
 
+// preResolveForTest is a test fixture that right-pads a short hex string
+// with '0' until it is exactly 40 characters. If the input is already 40
+// or more characters, it is returned unchanged. This lets unit tests
+// exercise commitUUID with short SHA prefixes (7-byte, 14-byte) that
+// production callers never see directly.
+func preResolveForTest(short string) string {
+	if len(short) >= 40 {
+		return short[:40]
+	}
+	return short + strings.Repeat("0", 40-len(short))
+}
+
 // TestPreResolveForTest exercises the test fixture that pads short
 // hex strings out to 40 chars. The padding behavior must be exactly
 // right-pad-with-'0' and truncate-or-pass-through for inputs of 40+
