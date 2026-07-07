@@ -21,15 +21,13 @@ type provider interface {
 }
 
 // CommitResolution configures the buf v1 commit-id resolution enhancements in
-// commitServiceHandler: startup HEAD pre-warm and the upstream sha probe used
-// on a Download cache miss. It is the connect-package mirror of the user-facing
-// connect config — kept here (not imported from cmd/easyp/internal/config) to
-// avoid an internal→cmd layering violation. A zero value disables both
-// enhancements (the historical behavior), so callers that construct the mux
-// via New (tests) are unaffected; production threads it via NewWithConfig.
+// commitServiceHandler: the upstream sha probe used on a Download cache miss.
+// It is the connect-package mirror of the user-facing connect config — kept
+// here (not imported from cmd/easyp/internal/config) to avoid an
+// internal→cmd layering violation. A zero value disables the enhancement
+// (the historical behavior), so callers that construct the mux via New
+// (tests) are unaffected; production threads it via NewWithConfig.
 type CommitResolution struct {
-	PrewarmEnabled   bool
-	PrewarmTimeout   time.Duration
 	ProbeEnabled     bool
 	ProbeNegativeTTL time.Duration
 	ProbeTimeout     time.Duration
@@ -61,8 +59,7 @@ func New(
 }
 
 // NewWithConfig is like New but enables commit-resolution enhancements per cfg.
-// PrewarmEnabled launches a best-effort background HEAD sweep; ProbeEnabled
-// turns on the upstream sha probe for Download cache misses.
+// ProbeEnabled turns on the upstream sha probe for Download cache misses.
 func NewWithConfig(
 	log *slog.Logger,
 	core provider,
@@ -93,23 +90,17 @@ func NewWithConfig(
 	knownOwners := buildKnownOwners(core.Repositories())
 	singleModule := buildKnownModules(core.Repositories())
 	commitHandler := &commitServiceHandler{
-		api:          a,
-		commitMap:    make(map[string]moduleRef),
-		infoCache:    make(map[string]commitInfoCache),
-		filesMap:     make(map[string][]content.File),
-		knownOwners:  knownOwners,
-		singleModule: singleModule,
-		missCache:    make(map[string]time.Time),
-
-		prewarmEnabled:   cfg.PrewarmEnabled,
-		prewarmTimeout:   cfg.PrewarmTimeout,
-		probeEnabled:     cfg.ProbeEnabled,
+		api:             a,
+		commitMap:       make(map[string]moduleRef),
+		infoCache:       make(map[string]commitInfoCache),
+		filesMap:        make(map[string][]content.File),
+		knownOwners:     knownOwners,
+		singleModule:    singleModule,
+		missCache:       make(map[string]time.Time),
+		probeEnabled:    cfg.ProbeEnabled,
 		probeNegativeTTL: cfg.ProbeNegativeTTL,
-		probeTimeout:     cfg.ProbeTimeout,
-		probeSem:         make(chan struct{}, maxConcurrentProbes),
-	}
-	if commitHandler.prewarmEnabled && commitHandler.prewarmTimeout > 0 {
-		go commitHandler.prewarmHeads()
+		probeTimeout:    cfg.ProbeTimeout,
+		probeSem:        make(chan struct{}, maxConcurrentProbes),
 	}
 	if commitHandler.probeEnabled && commitHandler.probeNegativeTTL > 0 {
 		go commitHandler.sweepMisses(context.Background())

@@ -69,6 +69,7 @@ var (
 	tmplGetDefaultBranch = tmplBuild("/branches/default")
 	tmplGetFilesList     = tmplBuild("/files")
 	tmplGetFileContent   = tmplBuild("/raw/{{.name}}")
+	tmplGetCommit        = tmplBuild("/commits/{{.id}}")
 )
 
 type httpClient struct {

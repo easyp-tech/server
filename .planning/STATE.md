@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
-status: shipped
-last_updated: "2026-07-07T10:32:00.000Z"
-last_activity: 2026-07-07 -- Phase 17 shipped (review fixes posted as PR #37 comment)
+status: executing
+last_updated: "2026-07-07T14:17:36.053Z"
+last_activity: 2026-07-07 -- Phase 18 planning complete
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 9
-  completed_plans: 9
+  total_phases: 8
+  completed_phases: 8
+  total_plans: 10
+  completed_plans: 10
   percent: 100
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 ## Current Position
 
-Phase: 17
-Plan: 17-01 shipped
-Status: Phase 17 shipped — review fixes posted as comment on PR #37
-Last activity: 2026-07-07 -- Phase 17 shipped (PR #37 comment <https://github.com/easyp-tech/server/pull/37#issuecomment-4901262336>)
+Phase: 18
+Plan: 18-01 shipped
+Status: Phase 18 plan 01 complete
+Last activity: 2026-07-07 -- Phase 18 plan 01 execution complete (refs, isSHA, prewarm removal, commitUUIDInverse)
 
 Progress: [####################] 100%
 
@@ -36,9 +36,9 @@ Progress: [####################] 100%
 
 **Velocity:**
 
-- Total plans completed: 4 (this milestone)
-- Average duration: ~8 min
-- Total execution time: ~32 min
+- Total plans completed: 5 (this milestone)
+- Average duration: ~10 min
+- Total execution time: ~50 min
 
 **By Phase:**
 
@@ -46,6 +46,7 @@ Progress: [####################] 100%
 |-------|-------|-------|----------|
 | 16    | 3     | -     | -        |
 | 17    | 1     | -     | 8 min    |
+| 18    | 1     | -     | 18 min   |
 
 **Recent Trend:**
 
@@ -76,6 +77,8 @@ None yet.
 
 - Phase 16 added: предлагаю изменения — use first 16 bytes of git commit id, probe all repos on miss, fix unclear not-found error message
 - Phase 17 added: Fix PR #37 review findings — address pre-merge issues from Phase 16 PR: re-route digest errors through `logHandlerError`/`upstreamError` (not `internalError`), remove `internalError` helper that bypassed `ERR-05`, accept SHA-256 Bitbucket commits (regression at commits_helpers.go:39), move `preResolveForTest` to a `_test.go` file
+- Phase 18 added: respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
+- Phase 18 planned: 1 plan (18-01-PLAN.md) with 3 tasks — (1) honor `Name.ref` end-to-end + add `isSHA`/`isUUID`/`commitUUIDInverse` helpers + provider ref-resolution; (2) add `commitUUIDInverse` + table-driven tests; (3) delete `prewarmHeads`/`registerResolved`/`PrewarmConfig` and rewrite `probeCommitID` to use the inverse for 32-char UUID inputs. See `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-{RESEARCH,01-PLAN,VALIDATION}.md`
 
 ## Deferred Items
 
@@ -89,6 +92,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-07T10:32:00.000Z
-Stopped at: Phase 17 shipped (1/1 plan, 4 tasks, 5 SCs satisfied, 13/13 verified, comment posted on PR #37)
-Resume file: <https://github.com/easyp-tech/server/pull/37#issuecomment-4901262336>
+Last session: 2026-07-07T14:17:36Z
+Stopped at: Phase 18 shipped (1/1 plan, 3 tasks, 5 SCs satisfied, executor self-check PASSED, 18 min)
+Resume file: `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-SUMMARY.md`

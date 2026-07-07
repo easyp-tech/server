@@ -169,6 +169,26 @@ Plans:
 | 15. Operational Logging       | v1.3 | 0/0 | Not started | - |
 | 16. Commit ID Resolution Improvements | v1.3 | 3/3 | Complete    | 2026-07-06 |
 | 17. Fix PR #37 review findings | v1.3 | 1/1 | Complete | 2026-07-07 |
+| 18. Respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic | v1.3 | 1/1 | Complete | 2026-07-07 |
+
+### Phase 18: Respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
+
+**Goal:** Three corrections to dependency resolution, shipped as one atomic pass: (1) honor the `ref` field the buf CLI sends in the `Name` message so a dep like `cyp/cyp-net-listeners:main/v2` returns the SHA at `main/v2`, not the HEAD; (2) replace the `commit != "" && commit != "main"` short-circuit in both bitbucket and github providers with an `isSHA(commit)` gate so non-SHA inputs route through the providers' commit-fetch APIs to resolve; (3) drop the `prewarmHeads` startup fan-out and replace it with a UUID→SHA-prefix inverse function (`commitUUIDInverse`) that lets `probeCommitID` recover the right module on a Download cache-miss without the prewarm.
+**Depends on:** Phase 17
+**Requirements**: SC-1, SC-2, SC-3, SC-4, SC-5
+**Success Criteria** (what must be TRUE):
+
+  1. A buf client pinning `buf-proxy.yadro.dev/cyp/cyp-net-listeners:main/v2` in `buf.yaml` gets a UUID in `buf.lock` derived from the SHA at `main/v2` (not from HEAD) — verified end-to-end by the providers' `TestGetMeta_ResolvesRef` and the connect-package `TestParseResourceRefName_ReadsRef`
+  2. The `commit != "" && commit != "main"` short-circuit is gone from both `bitbucket/getrepo.go` and `github/getrepo.go`; both providers now gate on `isSHA(commit)` — verified by structural grep + `go test ./internal/providers/{bitbucket,github}/ -count=1`
+  3. `prewarmHeads` and `registerResolved` are deleted from `commits.go`; the goroutine launch in `api.go:111-113` is gone; the `PrewarmConfig` block in `config.go:96-101` is gone; `prewarmEnabled`/`prewarmTimeout`/`prewarmOnce` fields on `commitServiceHandler` and `PrewarmEnabled`/`PrewarmTimeout` on `CommitResolution` are gone — verified by 5 structural grep checks returning 0 hits
+  4. `commitUUIDInverse(uuid string) (string, error)` exists in `commits_helpers.go`, returns the 28-char SHA prefix, errors on non-32-char or non-hex input; `TestCommitUUIDInverse` covers 8 cases (round-trip with a known 40-char SHA, all-zero, all-ones, 64-char SHA round-trip, empty, 31-char, 33-char, 32-char non-hex)
+  5. `probeCommitID` derives the 28-char SHA prefix from a 32-char UUID input via `commitUUIDInverse`, probes each source with the prefix, and only registers a hit when the returned `meta.Commit` actually starts with the recovered prefix (collision-safe); `TestServeDownload_AfterRestart_ProbeResolvesUUID` and `TestServeDownload_AfterRestart_ProbeMissesOnUnknownUUID` exercise the post-restart path
+
+**Plans:** 1 plan
+Plans:
+Plans:
+
+- [x] [18-01](./phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-PLAN.md) — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe
 
 ---
 
