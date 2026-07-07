@@ -92,6 +92,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-07T10:32:00.000Z
-Stopped at: Phase 17 shipped (1/1 plan, 4 tasks, 5 SCs satisfied, 13/13 verified, comment posted on PR #37)
-Resume file: <https://github.com/easyp-tech/server/pull/37#issuecomment-4901262336>
+Last session: 2026-07-07T14:17:36Z
+Stopped at: Phase 18 shipped (1/1 plan, 3 tasks, 5 SCs satisfied, executor self-check PASSED, 18 min)
+Resume file: `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-SUMMARY.md`
