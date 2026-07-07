@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
-status: shipped
-last_updated: "2026-07-07T10:32:00.000Z"
-last_activity: 2026-07-07 -- Phase 17 shipped (review fixes posted as PR #37 comment)
+status: executing
+stopped_at: "Phase 17 shipped (1/1 plan, 4 tasks, 5 SCs satisfied, 13/13 verified, comment posted on PR #37)"
+last_updated: "2026-07-07T13:52:19.499Z"
+last_activity: 2026-07-07 -- Phase 18 planning complete
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 7
-  total_plans: 9
+  total_plans: 10
   completed_plans: 9
-  percent: 100
+  percent: 88
 ---
 
 # Project State
@@ -27,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 Phase: 17
 Plan: 17-01 shipped
-Status: Phase 17 shipped — review fixes posted as comment on PR #37
-Last activity: 2026-07-07 -- Phase 17 shipped (PR #37 comment <https://github.com/easyp-tech/server/pull/37#issuecomment-4901262336>)
+Status: Ready to execute
+Last activity: 2026-07-07 -- Phase 18 planning complete
 
 Progress: [####################] 100%
 
@@ -76,6 +77,8 @@ None yet.
 
 - Phase 16 added: предлагаю изменения — use first 16 bytes of git commit id, probe all repos on miss, fix unclear not-found error message
 - Phase 17 added: Fix PR #37 review findings — address pre-merge issues from Phase 16 PR: re-route digest errors through `logHandlerError`/`upstreamError` (not `internalError`), remove `internalError` helper that bypassed `ERR-05`, accept SHA-256 Bitbucket commits (regression at commits_helpers.go:39), move `preResolveForTest` to a `_test.go` file
+- Phase 18 added: respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
+- Phase 18 planned: 1 plan (18-01-PLAN.md) with 3 tasks — (1) honor `Name.ref` end-to-end + add `isSHA`/`isUUID`/`commitUUIDInverse` helpers + provider ref-resolution; (2) add `commitUUIDInverse` + table-driven tests; (3) delete `prewarmHeads`/`registerResolved`/`PrewarmConfig` and rewrite `probeCommitID` to use the inverse for 32-char UUID inputs. See `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-{RESEARCH,01-PLAN,VALIDATION}.md`
 
 ## Deferred Items
 
