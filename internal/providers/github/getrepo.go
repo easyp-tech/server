@@ -12,14 +12,49 @@ import (
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
+// isSHA reports whether s is a 40-char (SHA-1) or 64-char (SHA-256)
+// lowercase hex string. Mirrors the connect-package isSHA used by
+// probeCommitID; duplicated here so the provider's commit-vs-ref gate
+// does not require exporting a connect-package helper.
+func isSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
 func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error) {
 	meta, err := c.getRepo(ctx, owner, repoName)
 	if err != nil {
 		return meta, fmt.Errorf("investigating %q/%q: %w", owner, repoName, err)
 	}
 
-	if commit != "" && commit != "main" {
-		meta.Commit = commit
+	// Three branches:
+	//   - commit == "":        no ref was supplied; keep HEAD from getRepo.
+	//   - isSHA(commit):       raw SHA fast path (40/64 lowercase hex).
+	//   - non-SHA non-empty:   treat as a ref and resolve via GitHub's
+	//                          repos.GetCommit (accepts ref names, short
+	//                          SHAs >= 7 chars, and full SHAs). The
+	//                          previous `commit != "main"` carve-out
+	//                          silently stamped the ref into meta.Commit
+	//                          without resolving, which both ignored refs
+	//                          and broke 40/64-char SHAs that weren't at
+	//                          HEAD.
+	if commit != "" {
+		if isSHA(commit) {
+			meta.Commit = commit
+		} else {
+			rc, _, err := c.repos.GetCommit(ctx, owner, repoName, commit, nil)
+			if err != nil {
+				return meta, fmt.Errorf("resolving ref %q: %w", commit, err)
+			}
+			meta.Commit = rc.GetSHA()
+		}
 	}
 
 	return meta, nil

@@ -1,0 +1,96 @@
+package github
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/google/go-github/v59/github"
+)
+
+// TestGetMeta_Empty pins the HEAD path: when no ref is supplied, GetMeta
+// returns the default branch's HEAD commit. This is the regression
+// guard for the empty-input path so a future change to the ref-resolution
+// branch cannot accidentally break the no-ref case.
+func TestGetMeta_Empty(t *testing.T) {
+	const headCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	mock := newMockRepos().
+		WithGet("cyp", "cyp-net-listeners",
+			&github.Repository{DefaultBranch: github.String("main")}, nil).
+		WithGetBranch("cyp", "cyp-net-listeners", "main", &github.Branch{
+			Commit: &github.RepositoryCommit{SHA: github.String(headCommit)},
+		}, nil)
+
+	c := client{log: testLogger(), repos: mock}
+	meta, err := c.GetMeta(context.Background(), "cyp", "cyp-net-listeners", "")
+	if err != nil {
+		t.Fatalf("GetMeta(empty) unexpected error: %v", err)
+	}
+	if meta.Commit != headCommit {
+		t.Fatalf("meta.Commit = %q, want %q (HEAD from default branch)", meta.Commit, headCommit)
+	}
+}
+
+// TestGetMeta_RawSHA_40 pins the SHA fast path: a 40-char lowercase hex
+// input is returned verbatim in meta.Commit without a call to repos.GetCommit.
+// This guards against a future refactor that accidentally routes SHAs
+// through the ref-resolution API.
+func TestGetMeta_RawSHA_40(t *testing.T) {
+	const sha = "81353411f7b010d5b9ebeb1899066aac18a36701"
+
+	mock := newMockRepos().
+		WithGet("cyp", "cyp-net-listeners",
+			&github.Repository{DefaultBranch: github.String("main")}, nil).
+		WithGetBranch("cyp", "cyp-net-listeners", "main", &github.Branch{
+			Commit: &github.RepositoryCommit{SHA: github.String("head")},
+		}, nil).
+		// Expect NO call to GetCommit for the SHA fast path.
+		WithGetCommitError("cyp", "cyp-net-listeners", sha,
+			errors.New("unexpected GetCommit call on SHA fast path"))
+
+	c := client{log: testLogger(), repos: mock}
+	meta, err := c.GetMeta(context.Background(), "cyp", "cyp-net-listeners", sha)
+	if err != nil {
+		t.Fatalf("GetMeta(40-char sha) unexpected error: %v", err)
+	}
+	if meta.Commit != sha {
+		t.Fatalf("meta.Commit = %q, want %q (SHA fast path)", meta.Commit, sha)
+	}
+}
+
+// TestGetMeta_ResolvesRef pins the ref-resolution path: a non-SHA, non-
+// empty input like "main/v2" triggers a call to repos.GetCommit(ctx,
+// owner, repo, "main/v2", nil), the response's SHA is parsed, and
+// meta.Commit is stamped with the resolved SHA. This is the headline
+// fix for the `buf.yaml: main/v2` case that previously collapsed to
+// HEAD.
+func TestGetMeta_ResolvesRef(t *testing.T) {
+	const (
+		ref      = "main/v2"
+		resolved = "abc1230000000000000000000000000000000000"
+	)
+
+	mock := newMockRepos().
+		WithGet("cyp", "cyp-net-listeners",
+			&github.Repository{DefaultBranch: github.String("main")}, nil).
+		WithGetBranch("cyp", "cyp-net-listeners", "main", &github.Branch{
+			Commit: &github.RepositoryCommit{SHA: github.String("head")},
+		}, nil).
+		WithGetCommit("cyp", "cyp-net-listeners", ref, &github.RepositoryCommit{
+			SHA: github.String(resolved),
+		}, nil)
+
+	c := client{log: testLogger(), repos: mock}
+	meta, err := c.GetMeta(context.Background(), "cyp", "cyp-net-listeners", ref)
+	if err != nil {
+		t.Fatalf("GetMeta(%q) unexpected error: %v", ref, err)
+	}
+	if mock.GetCommitCallCount("cyp", "cyp-net-listeners", ref) != 1 {
+		t.Errorf("expected exactly 1 GetCommit call for ref=%q, got %d", ref,
+			mock.GetCommitCallCount("cyp", "cyp-net-listeners", ref))
+	}
+	if meta.Commit != resolved {
+		t.Fatalf("meta.Commit = %q, want %q (resolved SHA from repos.GetCommit)", meta.Commit, resolved)
+	}
+}

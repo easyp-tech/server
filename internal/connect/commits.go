@@ -142,7 +142,7 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			slog.String("module", ref.module),
 			slog.String("repo", ref.module),
 		)
-		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
+		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, ref.ref)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
 				slog.String("owner", ref.owner), slog.String("module", ref.module),
@@ -345,7 +345,7 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 			slog.String("module", ref.module),
 			slog.String("repo", ref.module),
 		)
-		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, "")
+		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, ref.ref)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
 				slog.String("owner", ref.owner), slog.String("module", ref.module),

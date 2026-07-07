@@ -11,6 +11,11 @@ import (
 type moduleRef struct {
 	owner  string
 	module string
+	// ref is the buf BSR Name.ref field (proto field 3): the branch or
+	// tag the client asked for. Empty when the client did not send one
+	// (older buf CLI versions, or v1beta1 callers that omit the field);
+	// the providers treat empty ref as HEAD.
+	ref string
 }
 
 // commitUUID returns the buf-style 32-character dashless UUID for a git
@@ -57,6 +62,38 @@ func commitUUID(gitSHA string) (string, error) {
 	// SHA bytes 7..13 -> result bytes 9..15.
 	copy(result[9:16], sha[7:14])
 	return hex.EncodeToString(result[:]), nil
+}
+
+// isSHA reports whether s is a 40-char (SHA-1) or 64-char (SHA-256)
+// lowercase hex string. The hex check rejects refs like "main/v2" and
+// buf-issued UUIDs (32 chars). Used by providers to decide whether to
+// treat a GetMeta commit arg as a raw SHA (fast path) or as a ref to
+// resolve through the commit-fetch API.
+func isSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isUUID reports whether s is exactly 32 lowercase hex characters — the
+// shape of a buf-issued dashless UUID. Used by probeCommitID to detect
+// UUID inputs and route them through commitUUIDInverse.
+func isUUID(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseResourceRefs(msg []byte) []moduleRef {
@@ -106,7 +143,7 @@ func parseResourceRef(msg []byte) *moduleRef {
 }
 
 func parseResourceRefName(msg []byte) *moduleRef {
-	var owner, module string
+	var owner, module, ref string
 	for len(msg) > 0 {
 		num, typ, n := protowire.ConsumeTag(msg)
 		if n < 0 {
@@ -121,6 +158,13 @@ func parseResourceRefName(msg []byte) *moduleRef {
 			v, mLen := protowire.ConsumeBytes(msg)
 			msg = msg[mLen:]
 			module = string(v)
+		} else if num == 3 && typ == protowire.BytesType {
+			// buf BSR Name.ref (branch/tag). Optional: older buf clients
+			// do not send it; the ref-aware code paths tolerate an empty
+			// value (treated as HEAD by the providers).
+			v, mLen := protowire.ConsumeBytes(msg)
+			msg = msg[mLen:]
+			ref = string(v)
 		} else {
 			n = protowire.ConsumeFieldValue(num, typ, msg)
 			if n < 0 {
@@ -130,7 +174,7 @@ func parseResourceRefName(msg []byte) *moduleRef {
 		}
 	}
 	if owner != "" && module != "" {
-		return &moduleRef{owner: owner, module: module}
+		return &moduleRef{owner: owner, module: module, ref: ref}
 	}
 	return nil
 }
