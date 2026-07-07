@@ -34,7 +34,10 @@ import (
 // v1 buf.yaml and v1 with v2 buf.yaml.
 func TestServeHTTP_GetCommits_ReturnsDashlessUUID(t *testing.T) {
 	const wantSHA = "81353411f7b010d5b9ebeb1899066aac18a36701"
-	wantUUID := commitUUID(wantSHA) // 32 hex chars, version 4, RFC 4122 variant.
+	wantUUID, err := commitUUID(wantSHA) // 32 hex chars, version 4, RFC 4122 variant.
+	if err != nil {
+		t.Fatalf("commitUUID(%q) unexpected error: %v", wantSHA, err)
+	}
 
 	p := &mockProvider{
 		meta: content.Meta{
@@ -113,7 +116,10 @@ func TestServeHTTP_GetCommits_ReturnsDashlessUUID(t *testing.T) {
 // mints the right id but keys commitMap by the SHA would 400 here.
 func TestServeDownload_RoundTripWithMintedUUID(t *testing.T) {
 	const wantSHA = "0123456789abcdef0123456789abcdef01234567"
-	wantUUID := commitUUID(wantSHA)
+	wantUUID, err := commitUUID(wantSHA)
+	if err != nil {
+		t.Fatalf("commitUUID(%q) unexpected error: %v", wantSHA, err)
+	}
 
 	p := &mockProvider{
 		meta: content.Meta{
@@ -202,6 +208,12 @@ func TestServeDownload_UnknownCommitID_ReturnsBadRequest(t *testing.T) {
 	body, _ := io.ReadAll(dlResp.Body)
 	if !strings.Contains(string(body), "unknown commit id") {
 		t.Errorf("body does not contain \"unknown commit id\"; got: %s", body)
+	}
+	// Per D-12: the 400 message names the recovery action explicitly so an
+	// operator reading the log can see whether the failure is "client forgot
+	// GetCommits" or "client is on an older buf.lock and needs to re-resolve".
+	if !strings.Contains(string(body), "re-resolve via buf mod update / buf dep update") {
+		t.Errorf("body does not contain \"re-resolve via buf mod update / buf dep update\" (D-12 message); got: %s", body)
 	}
 }
 
@@ -330,7 +342,10 @@ func extractCommitIDFromGetCommitsResponse(t *testing.T, body []byte) string {
 // broke, we'd notice here before the network test).
 func TestExtractCommitIDFromGetCommitsResponse_RoundTrip(t *testing.T) {
 	const sha = "abcdef0123456789abcdef0123456789abcdef01"
-	want := commitUUID(sha)
+	want, err := commitUUID(sha)
+	if err != nil {
+		t.Fatalf("commitUUID(%q) unexpected error: %v", sha, err)
+	}
 	if len(want) != 32 {
 		t.Fatalf("commitUUID length = %d, want 32", len(want))
 	}

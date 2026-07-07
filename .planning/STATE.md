@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: Diagnostic Logging
-status: planning
-last_updated: "2026-06-18T17:32:59.092Z"
-last_activity: "2026-06-16 — Roadmap created for v1.3 Diagnostic Logging (5 phases: 11-15)"
+milestone_name: Diagnostic Logging — In Progress
+status: shipped
+last_updated: "2026-07-07T10:32:00.000Z"
+last_activity: 2026-07-07 -- Phase 17 shipped (review fixes posted as PR #37 comment)
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 5
-  completed_plans: 5
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 9
+  completed_plans: 9
   percent: 100
 ---
 
@@ -21,30 +21,31 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
 
-**Current focus:** v1.3 Diagnostic Logging — Phase 11 (Logging Foundation)
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: 11 of 15 (Logging Foundation)
-Plan: None yet
-Status: Ready to plan
-Last activity: 2026-06-16 — Roadmap created for v1.3 Diagnostic Logging (5 phases: 11-15)
+Phase: 17
+Plan: 17-01 shipped
+Status: Phase 17 shipped — review fixes posted as comment on PR #37
+Last activity: 2026-07-07 -- Phase 17 shipped (PR #37 comment <https://github.com/easyp-tech/server/pull/37#issuecomment-4901262336>)
 
-Progress: [                    ] 0%
+Progress: [####################] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0 (this milestone)
-- Average duration: N/A
-- Total execution time: N/A
+- Total plans completed: 4 (this milestone)
+- Average duration: ~8 min
+- Total execution time: ~32 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| (none yet) | 0 | - | - |
+| 16    | 3     | -     | -        |
+| 17    | 1     | -     | 8 min    |
 
 **Recent Trend:**
 
@@ -61,6 +62,7 @@ Recent decisions affecting current work:
 - [Roadmap]: 5 phases for v1.3, numbered 11-15 (continuing from v1.2)
 - [Roadmap]: Phase ordering follows dependency chain — Foundation before Infrastructure before handler logging
 - [Roadmap]: OPS-01 (panic recovery) placed in its own phase since it's a distinct infrastructure concern with no handler-level dependency
+- [Roadmap]: Phase 16 (Commit ID Resolution Improvements) added 2026-07-06 — three items bundled into one phase: drop SHA-256 derivation in favor of first-16-bytes of git SHA (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log
 
 ### Pending Todos
 
@@ -69,6 +71,11 @@ None yet.
 ### Blockers/Concerns
 
 None yet.
+
+### Roadmap Evolution
+
+- Phase 16 added: предлагаю изменения — use first 16 bytes of git commit id, probe all repos on miss, fix unclear not-found error message
+- Phase 17 added: Fix PR #37 review findings — address pre-merge issues from Phase 16 PR: re-route digest errors through `logHandlerError`/`upstreamError` (not `internalError`), remove `internalError` helper that bypassed `ERR-05`, accept SHA-256 Bitbucket commits (regression at commits_helpers.go:39), move `preResolveForTest` to a `_test.go` file
 
 ## Deferred Items
 
@@ -82,6 +89,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-18T17:32:59.075Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-logging-foundation/11-CONTEXT.md
+Last session: 2026-07-07T10:32:00.000Z
+Stopped at: Phase 17 shipped (1/1 plan, 4 tasks, 5 SCs satisfied, 13/13 verified, comment posted on PR #37)
+Resume file: <https://github.com/easyp-tech/server/pull/37#issuecomment-4901262336>
