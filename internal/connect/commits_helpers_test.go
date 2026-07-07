@@ -4,6 +4,8 @@ import (
 	"encoding/hex"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // TestCommitUUIDFormat locks in the wire format buf v1.69.0 requires.
@@ -306,6 +308,104 @@ func preResolveForTest(short string) string {
 		return short[:40]
 	}
 	return short + strings.Repeat("0", 40-len(short))
+}
+
+// TestIsSHA locks in the SHA-shape check used by the providers to decide
+// whether a GetMeta commit arg is a raw SHA (fast path) or a ref to
+// resolve. The contract: 40 or 64 lowercase hex characters only — refs
+// like "main/v2" and buf-issued UUIDs (32 chars) must both return false.
+func TestIsSHA(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "empty", in: "", want: false},
+		{name: "40 lowercase hex", in: strings.Repeat("0", 40), want: true},
+		{name: "64 lowercase hex", in: strings.Repeat("0", 64), want: true},
+		{name: "32 hex (UUID shape)", in: strings.Repeat("0", 32), want: false},
+		{name: "40 hex with trailing non-hex", in: strings.Repeat("0", 39) + "X", want: false},
+		{name: "40 hex with one uppercase", in: "81353411f7b010d5b9ebeb1899066aac18a3670A", want: false},
+		{name: "41 chars", in: strings.Repeat("0", 41), want: false},
+		{name: "39 chars", in: strings.Repeat("0", 39), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSHA(tc.in); got != tc.want {
+				t.Fatalf("isSHA(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsUUID locks in the 32-lowercase-hex shape check used by
+// probeCommitID to detect buf-issued dashless UUID inputs and route them
+// through commitUUIDInverse. The contract: exactly 32 lowercase hex
+// characters. Empty, 40-char, and non-hex inputs must all return false.
+func TestIsUUID(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "empty", in: "", want: false},
+		{name: "32 lowercase hex", in: strings.Repeat("0", 32), want: true},
+		{name: "40 lowercase hex", in: strings.Repeat("0", 40), want: false},
+		{name: "32 hex with trailing non-hex", in: strings.Repeat("0", 31) + "X", want: false},
+		{name: "31 chars", in: strings.Repeat("a", 31), want: false},
+		{name: "33 chars", in: strings.Repeat("a", 33), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isUUID(tc.in); got != tc.want {
+				t.Fatalf("isUUID(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseResourceRefName_ReadsRef verifies that parseResourceRefName
+// captures the ref field (proto field 3) of the buf BSR Name message.
+// The buf CLI sends a `ref` to disambiguate which branch/tag the client
+// wants; the proxy must return the SHA at that ref, not HEAD. Without
+// the field-3 arm, ref inputs would be silently dropped.
+func TestParseResourceRefName_ReadsRef(t *testing.T) {
+	// Build a Name { owner=1, module=2, ref=3 } message.
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp")
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp-net-listeners")
+	name = protowire.AppendTag(name, 3, protowire.BytesType)
+	name = protowire.AppendString(name, "main/v2")
+
+	ref := parseResourceRefName(name)
+	if ref == nil {
+		t.Fatal("parseResourceRefName returned nil for a valid Name with owner+module+ref")
+	}
+	if ref.owner != "cyp" || ref.module != "cyp-net-listeners" || ref.ref != "main/v2" {
+		t.Fatalf("parseResourceRefName = %+v, want {owner:cyp module:cyp-net-listeners ref:main/v2}", *ref)
+	}
+}
+
+// TestParseResourceRefName_NoRef verifies that the ref field is optional
+// in the buf BSR Name proto: a Name with only owner+module parses to a
+// moduleRef whose ref is the zero value. Older buf clients do not send a
+// ref; the ref-aware code paths must tolerate the field being absent.
+func TestParseResourceRefName_NoRef(t *testing.T) {
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp")
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp-net-listeners")
+
+	ref := parseResourceRefName(name)
+	if ref == nil {
+		t.Fatal("parseResourceRefName returned nil for a valid Name with owner+module (no ref)")
+	}
+	if ref.owner != "cyp" || ref.module != "cyp-net-listeners" || ref.ref != "" {
+		t.Fatalf("parseResourceRefName = %+v, want {owner:cyp module:cyp-net-listeners ref:}", *ref)
+	}
 }
 
 // TestPreResolveForTest exercises the test fixture that pads short
