@@ -190,6 +190,22 @@ Plans:
 
 - [x] [18-01](./phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-PLAN.md) — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe
 
+### Phase 19: we need e2e tests for the ref specified for dependency - looks like it does not work
+
+**Goal:** End-to-end proof that the proxy honors the `ref` field in a `buf.yaml` dependency: a `buf mod update` (and `buf dep update` on v1.32+) run with a `name:ref` dep in buf.yaml must produce a `buf.lock` whose `commit:` line is the UUID derived from the SHA at that ref, not from HEAD. Phase 18 (commit 4fc6f28) shipped the ref-honoring code path (`parseResourceRefName` reads proto field 3, `ServeHTTP`/`ServeGraph` pass `ref.ref` to providers, providers gate on `isSHA(commit)` and route refs through their commit-fetch APIs). This phase adds the missing real-server e2e tests that exercise the integration with a real buf CLI + real GitHub API.
+**Depends on:** Phase 18
+**Requirements**: SC-19-1, SC-19-2, SC-19-3 (all derived from this plan; see 19-01-PLAN.md)
+**Success Criteria** (what must be TRUE):
+
+  1. For every cached buf binary in `testdata/buf/`, `buf mod update` against the proxy with a `name:ref` dep in buf.yaml pins `buf.lock` to a different commit than the no-ref run; a regression where the proxy returns HEAD for the ref-pinned run fails the test with both lock files shown side-by-side (`TestRefRespected_ModUpdate_DiffersFromHead`)
+  2. For v1.69.0, `buf mod update` with the pinned googleapis tag (`common-protos-1_3_1`) pins `buf.lock` to the UUID derived from the SHA at that tag — the SHA is fetched via `git ls-remote https://github.com/googleapis/googleapis refs/tags/common-protos-1_3_1` and the UUID is computed via the same `commitUUID` byte table the proxy uses (`TestRefRespected_ModUpdate_MatchesUpstreamSHA`)
+  3. For v1.69.0, `buf dep update` with the pinned ref pins `buf.lock` to a different commit than the no-ref run; the modern subcommand exercises the same ref-honoring path the deprecated `buf mod update` does, on the v1beta1 protocol (`TestRefRespected_DepUpdate_DiffersFromHead`)
+
+**Plans:** 1 plan
+Plans:
+
+- [ ] [19-01](./phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/19-01-PLAN.md) — Adopt in-progress e2e drafts (ref_test.go + testutil/server.go additions); 2 tasks: (1) finalize testutil additions and verify testutil unit tests still pass; (2) finalize e2e tests, verify they compile + list + skip cleanly without EASYP_GH_TOKEN, and commit both files
+
 ---
 
 *Roadmap last updated: 2026-07-07*
