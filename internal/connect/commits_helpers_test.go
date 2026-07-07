@@ -154,6 +154,67 @@ func TestCommitUUID_KnownSHA(t *testing.T) {
 	}
 }
 
+// TestCommitUUID_SHA256_KnownSHA locks in the SHA-256 path added to
+// commitUUID so Bitbucket Server repos that return 64-char hex shas stop
+// 500-ing. Each case is paired with the byte-table read positions 0..5,
+// 6, 7..13: the function only consumes the first 14 decoded bytes, so a
+// 64-char SHA-256 whose first 14 bytes match a known 40-char fixture
+// must produce the same UUID. This is the regression-guard against any
+// future change that re-introduced a length-string slice ("first 40
+// chars of input") instead of reading the decoded buffer.
+func TestCommitUUID_SHA256_KnownSHA(t *testing.T) {
+	cases := []struct {
+		name string
+		sha  string
+		want string
+	}{
+		{
+			// Same UUID as the 40-char all-zero case — both inputs decode
+			// to all-zero in the first 14 byte-table read positions.
+			name: "all-zero 64-char SHA-256",
+			sha:  strings.Repeat("0", 64),
+			want: "00000000000040008000000000000000",
+		},
+		{
+			// Same UUID as the 40-char all-ones case for the same reason
+			// — first 14 bytes of decoded input are 0xff.
+			name: "all-ones 64-char SHA-256",
+			sha:  strings.Repeat("f", 64),
+			want: "ffffffffffff40ff80ffffffffffffff",
+		},
+		{
+			// Load-bearing regression-guard: a 64-char input whose first
+			// 14 decoded bytes match the 40-char `0123...4567` fixture
+			// must produce the same UUID. Proves the function actually
+			// consumes bytes from a SHA-256 buffer, not just the first 40
+			// chars of the string. The first 14 bytes here are
+			// 01 23 45 67 89 ab cd ef 01 23 45 67 89 ab; the trailing 18
+			// bytes (36 zero hex chars) are unused by the byte-table.
+			name: "64-char SHA-256 with 14-byte prefix matching 40-char fixture",
+			sha:  "0123456789abcdef0123456789ab" + strings.Repeat("0", 36),
+			want: "0123456789ab40cd80ef0123456789ab",
+		},
+		{
+			// Same idea for the deadbeef fixture: first 14 bytes match,
+			// trailing 18 bytes are zero. Same UUID as the 40-char case.
+			name: "all-deadbeef 64-char SHA-256",
+			sha:  "deadbeefdeadbeefdeadbeefdead" + strings.Repeat("0", 36),
+			want: "deadbeefdead40be80efdeadbeefdead",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := commitUUID(tc.sha)
+			if err != nil {
+				t.Fatalf("commitUUID(%q) unexpected error: %v", tc.sha, err)
+			}
+			if got != tc.want {
+				t.Fatalf("commitUUID(%q) = %q, want %q", tc.sha, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestCommitUUID_InvalidInput locks in the strict input contract from
 // D-03: commitUUID returns ("", error) for any input that is not
 // exactly 40 valid hex characters. Production callers always pass full
@@ -170,6 +231,8 @@ func TestCommitUUID_InvalidInput(t *testing.T) {
 		{name: "40 chars non-hex", in: strings.Repeat("z", 40)},
 		{name: "40 chars mixed non-hex", in: "81353411f7b010d5b9ebeb1899066aac18a3670!"},
 		{name: "1 char", in: "a"},
+		{name: "63 chars", in: strings.Repeat("a", 63)},
+		{name: "65 chars", in: strings.Repeat("a", 65)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

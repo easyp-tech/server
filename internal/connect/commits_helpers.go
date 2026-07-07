@@ -31,17 +31,19 @@ type moduleRef struct {
 // next. A random UUID per call would force the client to re-resolve on
 // every restart and break foreign-id caching in buf.lock.
 //
-// Input contract: the input must be exactly 40 lowercase hex characters
-// (the standard full-length git SHA-1 representation). Anything else
+// Input contract: the input must be exactly 40 or 64 lowercase hex characters
+// (the standard full-length git SHA-1 or SHA-256 representation). Anything else
 // returns ("", error). Production callers always pass full SHAs from
 // upstream GetMeta, so any non-conforming input is a contract violation.
+// 64-char SHA-256 input is required for Bitbucket Server on SHA-256-enabled
+// repos (bitbucket/getrepo.go:40), which returns out.Commit as 64 chars.
 func commitUUID(gitSHA string) (string, error) {
-	if len(gitSHA) != 40 {
-		return "", errors.New("commitUUID: input is not 40 lowercase hex characters")
+	if len(gitSHA) != 40 && len(gitSHA) != 64 {
+		return "", errors.New("commitUUID: input is not 40 or 64 lowercase hex characters")
 	}
 	sha, err := hex.DecodeString(gitSHA)
 	if err != nil {
-		return "", errors.New("commitUUID: input is not 40 lowercase hex characters")
+		return "", errors.New("commitUUID: input is not 40 or 64 lowercase hex characters")
 	}
 	var result [16]byte
 	// SHA bytes 0..5 -> result bytes 0..5.
