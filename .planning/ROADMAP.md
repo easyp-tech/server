@@ -201,8 +201,7 @@ Plans:
   2. For v1.69.0, `buf mod update` with the pinned googleapis tag (`common-protos-1_3_1`) pins `buf.lock` to the UUID derived from the SHA at that tag — the SHA is fetched via `git ls-remote https://github.com/googleapis/googleapis refs/tags/common-protos-1_3_1` and the UUID is computed via the same `commitUUID` byte table the proxy uses (`TestRefRespected_ModUpdate_MatchesUpstreamSHA`)
   3. For v1.69.0, `buf dep update` with the pinned ref pins `buf.lock` to a different commit than the no-ref run; the modern subcommand exercises the same ref-honoring path the deprecated `buf mod update` does, on the v1beta1 protocol (`TestRefRespected_DepUpdate_DiffersFromHead`)
 
-**Plans:** 1 plan
-Plans:
+**Plans:** 1 planPlans:
 
 - [ ] [19-01](./phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/19-01-PLAN.md) — Adopt in-progress e2e drafts (ref_test.go + testutil/server.go additions); 2 tasks: (1) finalize testutil additions and verify testutil unit tests still pass; (2) finalize e2e tests, verify they compile + list + skip cleanly without EASYP_GH_TOKEN, and commit both files
 

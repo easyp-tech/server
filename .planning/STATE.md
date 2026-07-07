@@ -3,14 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
 status: executing
-last_updated: "2026-07-07T14:17:36.053Z"
-last_activity: 2026-07-07 -- Phase 18 planning complete
+stopped_at: Phase 18 shipped (1/1 plan, 3 tasks, 5 SCs satisfied, executor self-check PASSED, 18 min)
+last_updated: "2026-07-07T15:58:02.521Z"
+last_activity: 2026-07-07 -- Phase 19 planning complete
 progress:
-  total_phases: 8
+  total_phases: 9
   completed_phases: 8
-  total_plans: 10
+  total_plans: 11
   completed_plans: 10
-  percent: 100
+  percent: 89
 ---
 
 # Project State
@@ -27,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 Phase: 18
 Plan: 18-01 shipped
-Status: Phase 18 plan 01 complete
-Last activity: 2026-07-07 -- Phase 18 plan 01 execution complete (refs, isSHA, prewarm removal, commitUUIDInverse)
+Status: Ready to execute
+Last activity: 2026-07-07 -- Phase 19 planning complete
 
 Progress: [####################] 100%
 
@@ -79,6 +80,7 @@ None yet.
 - Phase 17 added: Fix PR #37 review findings — address pre-merge issues from Phase 16 PR: re-route digest errors through `logHandlerError`/`upstreamError` (not `internalError`), remove `internalError` helper that bypassed `ERR-05`, accept SHA-256 Bitbucket commits (regression at commits_helpers.go:39), move `preResolveForTest` to a `_test.go` file
 - Phase 18 added: respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
 - Phase 18 planned: 1 plan (18-01-PLAN.md) with 3 tasks — (1) honor `Name.ref` end-to-end + add `isSHA`/`isUUID`/`commitUUIDInverse` helpers + provider ref-resolution; (2) add `commitUUIDInverse` + table-driven tests; (3) delete `prewarmHeads`/`registerResolved`/`PrewarmConfig` and rewrite `probeCommitID` to use the inverse for 32-char UUID inputs. See `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-{RESEARCH,01-PLAN,VALIDATION}.md`
+- Phase 19 added: e2e tests for the `ref` specified for dependency — `looks like it does not work`. Phase 18 introduced end-to-end honoring of `Name.ref` in `buf.yaml` dependencies (plus `commitUUIDInverse` for 32-char UUID inputs); need a real-server e2e test that exercises the path where the `ref` resolves through buf cache/git to prove it works (or surfaces the bug). See `e2e/ref_test.go` and `.planning/phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/`.
 
 ## Deferred Items
 
