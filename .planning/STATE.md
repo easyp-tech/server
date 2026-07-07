@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
-status: milestone_complete
-last_updated: 2026-07-06T13:36:30.967Z
-last_activity: 2026-07-06 -- Phase 16 execution started
+status: executing
+last_updated: "2026-07-07T06:57:31.648Z"
+last_activity: 2026-07-07 -- Phase 17 planning complete
 progress:
-  total_phases: 6
-  completed_phases: 5
-  total_plans: 8
+  total_phases: 7
+  completed_phases: 6
+  total_plans: 9
   completed_plans: 8
-  percent: 83
-stopped_at: Milestone complete (Phase 16 was final phase)
+  percent: 86
 ---
 
 # Project State
@@ -28,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 Phase: 16
 Plan: Not started
-Status: Milestone complete
-Last activity: 2026-07-06
+Status: Ready to execute
+Last activity: 2026-07-07 -- Phase 17 planning complete
 
 Progress: [                    ] 0%
 
@@ -76,6 +75,7 @@ None yet.
 ### Roadmap Evolution
 
 - Phase 16 added: предлагаю изменения — use first 16 bytes of git commit id, probe all repos on miss, fix unclear not-found error message
+- Phase 17 added: Fix PR #37 review findings — address pre-merge issues from Phase 16 PR: re-route digest errors through `logHandlerError`/`upstreamError` (not `internalError`), remove `internalError` helper that bypassed `ERR-05`, accept SHA-256 Bitbucket commits (regression at commits_helpers.go:39), move `preResolveForTest` to a `_test.go` file
 
 ## Deferred Items
 

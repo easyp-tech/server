@@ -40,6 +40,7 @@
 - [ ] **Phase 14: Provider Logging** — Debug-level tracing for GitHub provider and Artifactory cache operations
 - [ ] **Phase 15: Operational Logging** — Panic recovery middleware with full stack trace
 - [x] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log (completed 2026-07-06)
+- [ ] **Phase 17: Fix PR #37 review findings** — Address pre-merge review findings from PR #37 (Phase 16) so the commit-id format cutover lands without undoing the v1.3 logging-quality work or breaking Bitbucket SHA-256 repositories
 
 ## Phase Details
 
@@ -129,6 +130,24 @@
 
 **Plans**: TBD
 
+### Phase 17: Fix PR #37 review findings
+
+**Goal:** Address pre-merge review findings from PR #37 (Phase 16) so the commit-id format cutover lands without undoing the v1.3 logging-quality work or breaking Bitbucket SHA-256 repositories
+**Depends on:** Phase 16
+**Requirements**: TBD
+**Success Criteria** (what must be TRUE):
+
+  1. A `computeB4Digest` failure from `GetFiles`, `computeB4DigestFromFiles`, or `commitUUID` is logged via `logHandlerError`/`upstreamError` (not `internalError`) with full context (owner, module, repo, commit, request_id, server, protocol, status) and returns 502 for upstream failures — restores the `ERR-05` contract that the new `internalError` helper bypassed
+  2. The new `internalError` helper is removed; all handler-level 500s flow through the existing `logHandlerError` (commits.go:777) so the structured 5xx log line is joinable on `request_id` and `error_class=internal` is set automatically
+  3. `commitUUID` accepts git SHAs of 40 chars (SHA-1) and 64 chars (SHA-256) — Bitbucket Server on a SHA-256-enabled repo returns 64-char commits and currently 500s on the strict `len != 40` check (commits_helpers.go:39); a unit test covers both lengths
+  4. A new test in `commits_helpers_test.go` (not `_test.go` production file) exercises the SHA-256 path; `preResolveForTest` (commits_helpers.go:60-70) is moved out of the production source so it cannot be reached by future code
+  5. The 400 not-found response message and structured log line for an unresolvable commit id remain generic enough to apply to both stale-lockfile misses and genuine foreign-id misses from other registries
+
+**Plans:** 1 plan
+Plans:
+
+- [ ] 17-01-PLAN.md — Atomic 4-task fix: routing `computeB4Digest` errors through the right helpers, removing `internalError`, accepting 64-char SHA-256, softening the 400 message, moving `preResolveForTest` to the test file (covers SC-1 through SC-5)
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -149,7 +168,8 @@
 | 14. Provider Logging          | v1.3 | 0/0 | Not started | - |
 | 15. Operational Logging       | v1.3 | 0/0 | Not started | - |
 | 16. Commit ID Resolution Improvements | v1.3 | 3/3 | Complete    | 2026-07-06 |
+| 17. Fix PR #37 review findings | v1.3 | 0/1 | Not started | - |
 
 ---
 
-*Roadmap last updated: 2026-06-16*
+*Roadmap last updated: 2026-07-07*
