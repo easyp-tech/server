@@ -91,19 +91,14 @@ func protocolLabel(isV1 bool) string {
 	return "v1beta1"
 }
 
-// internalError writes a 500 response with a plain "internal error" body and
-// emits a structured warn log line tagged error_class=internal. Use when this
-// proxy itself produced a bad value (e.g. commitUUID rejected a malformed
-// input that should never have reached this code path). Per D-04: this is
-// treated as a programming bug, not a client error. Mirrors the response
-// shape of logHandlerError (plain text body, status 500, no JSON encoder).
-func (h *commitServiceHandler) internalError(w http.ResponseWriter, r *http.Request, commitID, upstreamErr string) {
-	h.hlog(r).LogAttrs(r.Context(), slog.LevelWarn, "internal: commitUUID failure",
-		slog.String("error_class", "internal"),
-		slog.String("commit_id", commitID),
-		slog.String("upstream_error", upstreamErr))
-	http.Error(w, "internal error", http.StatusInternalServerError)
-}
+// errCommitUUIDContract marks errors that arise when commitUUID rejects an
+// input that an upstream provider returned. The contract assumes callers have
+// already validated the sha shape, so a non-conforming value is a real
+// programming/upstream bug (not a transient upstream outage) and routes
+// through h.logHandlerError as 500 internal error. Other digest errors
+// (GetFiles / computeB4DigestFromFiles) route through h.upstreamError as
+// 502 because they reflect provider health, not contract violations.
+var errCommitUUIDContract = errors.New("commitUUID contract violation")
 
 func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -157,7 +152,9 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		cid, cidErr := commitUUID(meta.Commit)
 		if cidErr != nil {
-			h.internalError(w, r, meta.Commit, cidErr.Error())
+			h.logHandlerError(r, w, "internal error", http.StatusInternalServerError,
+				slog.String("commit_id", meta.Commit),
+				slog.String("upstream_error", cidErr.Error()))
 			return
 		}
 		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
@@ -171,9 +168,19 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			slog.String("commit_id", cid),
 			slog.Bool("is_v1", isV1),
 		)
-		digest, err := h.computeB4Digest(r, ref, meta.Commit)
+		digest, err := h.computeB4Digest(r, ref, meta.Commit, cid)
 		if err != nil {
-			h.internalError(w, r, meta.Commit, err.Error())
+			if errors.Is(err, errCommitUUIDContract) {
+				h.logHandlerError(r, w, "internal error", http.StatusInternalServerError,
+					slog.String("commit_id", cid),
+					slog.String("upstream_error", err.Error()))
+				return
+			}
+			h.upstreamError(r, w, fmt.Sprintf("digest for %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
+				slog.String("repo", ref.module),
+				slog.String("commit", meta.Commit),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		if isV1 {
@@ -348,12 +355,24 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		}
 		cid, cidErr := commitUUID(meta.Commit)
 		if cidErr != nil {
-			h.internalError(w, r, meta.Commit, cidErr.Error())
+			h.logHandlerError(r, w, "internal error", http.StatusInternalServerError,
+				slog.String("commit_id", meta.Commit),
+				slog.String("upstream_error", cidErr.Error()))
 			return
 		}
-		digest, err := h.computeB4Digest(r, ref, meta.Commit)
+		digest, err := h.computeB4Digest(r, ref, meta.Commit, cid)
 		if err != nil {
-			h.internalError(w, r, meta.Commit, err.Error())
+			if errors.Is(err, errCommitUUIDContract) {
+				h.logHandlerError(r, w, "internal error", http.StatusInternalServerError,
+					slog.String("commit_id", cid),
+					slog.String("upstream_error", err.Error()))
+				return
+			}
+			h.upstreamError(r, w, fmt.Sprintf("digest for %s/%s", ref.owner, ref.module),
+				slog.String("owner", ref.owner), slog.String("module", ref.module),
+				slog.String("repo", ref.module),
+				slog.String("commit", meta.Commit),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		if isV1 {
@@ -665,7 +684,9 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 		}
 		cid, err = commitUUID(meta.Commit)
 		if err != nil {
-			h.internalError(w, r, meta.Commit, err.Error())
+			h.logHandlerError(r, w, "internal error", http.StatusInternalServerError,
+				slog.String("commit_id", meta.Commit),
+				slog.String("upstream_error", err.Error()))
 			return
 		}
 		digest, _ = h.computeB4DigestFromFiles(files)
@@ -741,7 +762,7 @@ func toB5Digest(b4Digest []byte) ([]byte, error) {
 }
 
 
-func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, commit string) ([]byte, error) {
+func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, commit, cid string) ([]byte, error) {
 	files, err := h.api.repo.GetFiles(r.Context(), ref.owner, ref.module, commit)
 	if err != nil {
 		return nil, err
@@ -750,9 +771,14 @@ func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, c
 	if err != nil {
 		return nil, err
 	}
-	cid, err := commitUUID(commit)
-	if err != nil {
-		return nil, err
+	// The caller has already validated commitUUID(meta.Commit); re-check the
+	// same input here so an upstream contract violation surfaces with the
+	// errCommitUUIDContract sentinel and the dispatcher can route it as 500
+	// (a real bug), not 502 (a transient upstream outage). Use the caller-
+	// supplied cid to populate filesMap — re-deriving it would just be a
+	// second sha->UUID pass for the same input.
+	if _, uidErr := commitUUID(commit); uidErr != nil {
+		return nil, fmt.Errorf("%w: %v", errCommitUUIDContract, uidErr)
 	}
 	h.commitMu.Lock()
 	h.filesMap[cid] = files
