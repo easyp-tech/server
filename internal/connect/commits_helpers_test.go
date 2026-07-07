@@ -408,6 +408,94 @@ func TestParseResourceRefName_NoRef(t *testing.T) {
 	}
 }
 
+// TestCommitUUIDInverse locks in the inverse of commitUUID: given a
+// 32-char dashless UUID, recover the first 28 hex characters of the
+// git SHA that produced it. The recovery is lossy by design —
+// commitUUID drops the last 6 bytes of the SHA (and overwrites the
+// version/variant bytes at positions 6 and 8), so commitUUIDInverse
+// can only recover the first 14 bytes (28 hex chars). The recovered
+// prefix is sufficient to identify a single source among the
+// configured providers (each source's commit space is disjoint) and
+// to scope a probeCommitID fan-out to the right repository.
+//
+// The round-trip here is commitUUID -> commitUUIDInverse, NOT
+// commitUUIDInverse -> commitUUID. The forward mapping is
+// deterministic; the inverse is many-to-one (collisions on the last 6
+// bytes are accepted as out-of-scope for collision avoidance).
+func TestCommitUUIDInverse(t *testing.T) {
+	cases := []struct {
+		name    string
+		uuid    string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "40-char SHA round-trip",
+			uuid: mustCommitUUID(t, "81353411f7b010d5b9ebeb1899066aac18a36701"),
+			want: "81353411f7b010d5b9ebeb1899066aac",
+		},
+		{
+			name: "all-zero 40-char SHA",
+			uuid: mustCommitUUID(t, "0000000000000000000000000000000000000000"),
+			want: "00000000000000000000000000000000",
+		},
+		{
+			name: "all-ones 40-char SHA",
+			uuid: mustCommitUUID(t, "ffffffffffffffffffffffffffffffffffffffff"),
+			want: "ffffffffffffffffffffffffffffffff",
+		},
+		{
+			// commitUUID consumes only the first 14 bytes regardless of
+			// input length, so a 64-char SHA-256 whose first 14 bytes
+			// match a 40-char fixture must produce the same UUID and
+			// hence the same recovered prefix.
+			name: "64-char SHA round-trip",
+			uuid: mustCommitUUID(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00"),
+			want: "0123456789abcdef0123456789abcdef",
+		},
+		{name: "empty string", uuid: "", want: "", wantErr: true},
+		{name: "31 chars", uuid: strings.Repeat("a", 31), want: "", wantErr: true},
+		{name: "33 chars", uuid: strings.Repeat("a", 33), want: "", wantErr: true},
+		{name: "32 chars non-hex", uuid: strings.Repeat("X", 32), want: "", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := commitUUIDInverse(tc.uuid)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("commitUUIDInverse(%q) = %q, want error", tc.uuid, got)
+				}
+				if !strings.Contains(err.Error(), "commitUUIDInverse") {
+					t.Errorf("commitUUIDInverse error = %q, want substring \"commitUUIDInverse\"", err.Error())
+				}
+				if got != "" {
+					t.Errorf("commitUUIDInverse(%q) on error path returned non-empty string %q", tc.uuid, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("commitUUIDInverse(%q) unexpected error: %v", tc.uuid, err)
+			}
+			if got != tc.want {
+				t.Fatalf("commitUUIDInverse(%q) = %q, want %q", tc.uuid, got, tc.want)
+			}
+		})
+	}
+}
+
+// mustCommitUUID is a test helper that computes commitUUID(sha) and
+// fails the test on error. The TestCommitUUIDInverse table computes
+// the UUID inline so a future change to commitUUID's byte-table
+// automatically updates the test expectations.
+func mustCommitUUID(t *testing.T, sha string) string {
+	t.Helper()
+	u, err := commitUUID(sha)
+	if err != nil {
+		t.Fatalf("commitUUID(%q) unexpected error: %v", sha, err)
+	}
+	return u
+}
+
 // TestPreResolveForTest exercises the test fixture that pads short
 // hex strings out to 40 chars. The padding behavior must be exactly
 // right-pad-with-'0' and truncate-or-pass-through for inputs of 40+
