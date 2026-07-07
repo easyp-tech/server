@@ -40,7 +40,7 @@
 - [ ] **Phase 14: Provider Logging** — Debug-level tracing for GitHub provider and Artifactory cache operations
 - [ ] **Phase 15: Operational Logging** — Panic recovery middleware with full stack trace
 - [x] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log (completed 2026-07-06)
-- [ ] **Phase 17: Fix PR #37 review findings** — Address pre-merge review findings from PR #37 (Phase 16) so the commit-id format cutover lands without undoing the v1.3 logging-quality work or breaking Bitbucket SHA-256 repositories
+- [x] **Phase 17: Fix PR #37 review findings** — Address pre-merge review findings from PR #37 (Phase 16) so the commit-id format cutover lands without undoing the v1.3 logging-quality work or breaking Bitbucket SHA-256 repositories (completed 2026-07-07)
 
 ## Phase Details
 
@@ -146,7 +146,7 @@
 **Plans:** 1 plan
 Plans:
 
-- [ ] 17-01-PLAN.md — Atomic 4-task fix: routing `computeB4Digest` errors through the right helpers, removing `internalError`, accepting 64-char SHA-256, softening the 400 message, moving `preResolveForTest` to the test file (covers SC-1 through SC-5)
+- [x] 17-01-PLAN.md — Atomic 4-task fix: routing `computeB4Digest` errors through the right helpers, removing `internalError`, accepting 64-char SHA-256, softening the 400 message, moving `preResolveForTest` to the test file (covers SC-1 through SC-5)
 
 ## Progress
 
@@ -168,7 +168,7 @@ Plans:
 | 14. Provider Logging          | v1.3 | 0/0 | Not started | - |
 | 15. Operational Logging       | v1.3 | 0/0 | Not started | - |
 | 16. Commit ID Resolution Improvements | v1.3 | 3/3 | Complete    | 2026-07-06 |
-| 17. Fix PR #37 review findings | v1.3 | 0/1 | Not started | - |
+| 17. Fix PR #37 review findings | v1.3 | 1/1 | Complete | 2026-07-07 |
 
 ---
 
