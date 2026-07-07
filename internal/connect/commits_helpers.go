@@ -96,6 +96,41 @@ func isUUID(s string) bool {
 	return true
 }
 
+// commitUUIDInverse recovers the first 28 hex characters (14 bytes) of
+// the git SHA that produced the given buf-issued dashless UUID. The
+// full SHA cannot be recovered: commitUUID drops the last 6 bytes
+// during the forward mapping (14-of-20-byte collision surface — 2^112
+// space, accepted as out-of-scope for collision avoidance). The
+// recovered prefix is sufficient to identify a specific source among
+// the configured providers (each source's commit space is disjoint)
+// and to scope a probeCommitID fan-out to the right repository.
+//
+// Input contract: the input must be exactly 32 lowercase hex characters
+// (the standard dashless UUID shape that uuidutil.FromDashless
+// accepts). Any other input returns ("", error).
+//
+// Inverse: if uuid == commitUUID(sha) for some 40- or 64-char sha,
+// then commitUUIDInverse(uuid) == hex(sha[0:14]). The inverse does NOT
+// require knowledge of the original sha length — it recovers the same
+// 14 bytes regardless of whether the input was SHA-1 or SHA-256.
+func commitUUIDInverse(uuid string) (string, error) {
+	if len(uuid) != 32 {
+		return "", errors.New("commitUUIDInverse: input is not 32 lowercase hex characters")
+	}
+	u, err := hex.DecodeString(uuid)
+	if err != nil {
+		return "", errors.New("commitUUIDInverse: input is not 32 lowercase hex characters")
+	}
+	// Mirror commitUUID's byte-table in reverse. Bytes 6 and 8 of u are
+	// version/variant and were overwritten by commitUUID; they are not
+	// recoverable. The other 14 bytes are the first 14 bytes of the SHA.
+	var sha [20]byte
+	copy(sha[0:6], u[0:6])
+	sha[6] = u[7]
+	copy(sha[7:14], u[9:16])
+	return hex.EncodeToString(sha[:14]), nil
+}
+
 func parseResourceRefs(msg []byte) []moduleRef {
 	var refs []moduleRef
 	for len(msg) > 0 {

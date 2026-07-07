@@ -432,17 +432,17 @@ func TestCommitUUIDInverse(t *testing.T) {
 		{
 			name: "40-char SHA round-trip",
 			uuid: mustCommitUUID(t, "81353411f7b010d5b9ebeb1899066aac18a36701"),
-			want: "81353411f7b010d5b9ebeb1899066aac",
+			want: "81353411f7b010d5b9ebeb189906",
 		},
 		{
 			name: "all-zero 40-char SHA",
 			uuid: mustCommitUUID(t, "0000000000000000000000000000000000000000"),
-			want: "00000000000000000000000000000000",
+			want: "0000000000000000000000000000",
 		},
 		{
 			name: "all-ones 40-char SHA",
 			uuid: mustCommitUUID(t, "ffffffffffffffffffffffffffffffffffffffff"),
-			want: "ffffffffffffffffffffffffffffffff",
+			want: "ffffffffffffffffffffffffffff",
 		},
 		{
 			// commitUUID consumes only the first 14 bytes regardless of
@@ -450,8 +450,8 @@ func TestCommitUUIDInverse(t *testing.T) {
 			// match a 40-char fixture must produce the same UUID and
 			// hence the same recovered prefix.
 			name: "64-char SHA round-trip",
-			uuid: mustCommitUUID(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef00"),
-			want: "0123456789abcdef0123456789abcdef",
+			uuid: mustCommitUUID(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"),
+			want: "0123456789abcdef0123456789ab",
 		},
 		{name: "empty string", uuid: "", want: "", wantErr: true},
 		{name: "31 chars", uuid: strings.Repeat("a", 31), want: "", wantErr: true},
