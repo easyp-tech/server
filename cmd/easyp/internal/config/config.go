@@ -85,19 +85,7 @@ type Artifactory struct {
 // internal/connect. All fields default sensibly (WithDefaults) so the proxy
 // behaves as intended with no connect: block in the config file.
 type Connect struct {
-	Prewarm PrewarmConfig `json:"prewarm"`
-	Probe   ProbeConfig   `json:"probe"`
-}
-
-// PrewarmConfig controls startup HEAD pre-warming: the proxy resolves the
-// current HEAD commit of every configured module at startup so that clients
-// caching a current HEAD sha hit the commit map without a prior in-session
-// GetCommits.
-type PrewarmConfig struct {
-	// Enabled is a pointer so we can distinguish "unset" (default true) from
-	// an explicit false. Set enabled: false to disable.
-	Enabled        *bool         `json:"enabled"`
-	PerCallTimeout time.Duration `json:"per_call_timeout"`
+	Probe ProbeConfig `json:"probe"`
 }
 
 // ProbeConfig controls the upstream sha probe used on a Download cache miss:
@@ -117,13 +105,6 @@ type ProbeConfig struct {
 // is loaded.
 func (c Connect) WithDefaults() Connect {
 	out := c
-	if out.Prewarm.Enabled == nil {
-		t := true
-		out.Prewarm.Enabled = &t
-	}
-	if out.Prewarm.PerCallTimeout == 0 {
-		out.Prewarm.PerCallTimeout = 10 * time.Second
-	}
 	if out.Probe.Enabled == nil {
 		t := true
 		out.Probe.Enabled = &t

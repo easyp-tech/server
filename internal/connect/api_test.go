@@ -92,9 +92,11 @@ func (s *mockSource) GetMeta(_ context.Context, commit string) (content.Meta, er
 	if s.getMetaErr != nil {
 		return content.Meta{}, s.getMetaErr
 	}
-	// HEAD (empty arg) resolves to the source's own commit; a specific commit
-	// resolves only if it is the one this source owns.
-	if commit != "" && commit != s.commit {
+	// HEAD (empty arg) resolves to the source's own commit; a specific
+	// commit resolves only if it is the one this source owns. A SHA
+	// prefix (a 28-char substring of s.commit) also resolves — used by
+	// the post-restart probe path (commitUUIDInverse + prefix-match).
+	if commit != "" && commit != s.commit && !strings.HasPrefix(s.commit, commit) {
 		return content.Meta{}, fmt.Errorf("mock: commit %q not found in %s/%s", commit, s.owner, s.repoName)
 	}
 	return content.Meta{Commit: s.commit, DefaultBranch: "main"}, nil
@@ -1341,9 +1343,8 @@ func TestOwnerServiceV1MethodNotAllowed(t *testing.T) {
 }
 
 // newTestCommitHandler builds a commitServiceHandler wired to a provider with
-// minimal state, for direct unit testing of prewarmHeads / probeCommitID
-// without the HTTP layer. Enhancements are off by default; tests flip the
-// knobs they exercise.
+// minimal state, for direct unit testing of probeCommitID without the HTTP
+// layer. Enhancements are off by default; tests flip the knobs they exercise.
 func newTestCommitHandler(repo provider) *commitServiceHandler {
 	return &commitServiceHandler{ //nolint:exhaustruct
 		api: &api{ //nolint:exhaustruct
@@ -1354,41 +1355,10 @@ func newTestCommitHandler(repo provider) *commitServiceHandler {
 		infoCache:       make(map[string]commitInfoCache),
 		filesMap:        make(map[string][]content.File),
 		missCache:       make(map[string]time.Time),
-		prewarmTimeout:  time.Second,
 		probeTimeout:    time.Second,
 		probeNegativeTTL: time.Minute,
 		probeSem:        make(chan struct{}, maxConcurrentProbes),
 	}
-}
-
-// TestPrewarmHeads_PopulatesCommitMap verifies the startup sweep resolves the
-// HEAD commit of each configured source and registers it so a later Download
-// of that sha hits without a prior in-session GetCommits.
-func TestPrewarmHeads_PopulatesCommitMap(t *testing.T) {
-	repo := &mockProvider{repos: []source.Source{
-		&mockSource{owner: "googleapis", repoName: "googleapis", commit: "aaa1110000000000000000000000000000000000"},
-		&mockSource{owner: "cyp", repoName: "cyp-logger", commit: "bbb2220000000000000000000000000000000000"},
-	}}
-	h := newTestCommitHandler(repo)
-	h.prewarmEnabled = true
-
-	h.prewarmHeads() // synchronous (sync.Once guards the goroutine-launched path)
-
-	h.commitMu.RLock()
-	ref, ok := h.commitMap["aaa1110000000000000000000000000000000000"]
-	h.commitMu.RUnlock()
-	if !ok || ref.owner != "googleapis" || ref.module != "googleapis" {
-		t.Fatalf("aaa111... not resolved to googleapis/googleapis; ok=%v ref=%+v", ok, ref)
-	}
-	h.commitMu.RLock()
-	_, ok = h.commitMap["bbb2220000000000000000000000000000000000"]
-	h.commitMu.RUnlock()
-	if !ok {
-		t.Fatal("bbb222... (cyp/cyp-logger HEAD) not pre-warmed")
-	}
-
-	// Idempotent: a second run must not panic or duplicate work.
-	h.prewarmHeads()
 }
 
 // TestProbeCommitID_HitResolvesAndCaches verifies that a sha owned by exactly
@@ -1421,25 +1391,29 @@ func TestProbeCommitID_HitResolvesAndCaches(t *testing.T) {
 // re-probe (no extra upstream GetMeta calls).
 func TestProbeCommitID_MissNegativeCaches(t *testing.T) {
 	var calls atomic.Int32
+	// Use a 40-char SHA that does NOT match the source's commit. The
+	// mockSource's GetMeta returns the error "not found in cyp/cyp-apis"
+	// for any commit arg that is neither s.commit nor a prefix of
+	// s.commit, so the probe sees a real fan-out miss.
 	repo := &mockProvider{repos: []source.Source{
-		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "real", getMetaCalls: &calls},
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", getMetaCalls: &calls},
 	}}
 	h := newTestCommitHandler(repo)
 	h.probeEnabled = true
 
-	ref, ok := h.probeCommitID(context.Background(), "bogus000")
+	ref, ok := h.probeCommitID(context.Background(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if ok || ref != nil {
 		t.Fatalf("bogus sha should miss; got ok=%v ref=%+v", ok, ref)
 	}
 	if first := calls.Load(); first != 1 {
 		t.Fatalf("probe should issue exactly 1 GetMeta call on miss, got %d", first)
 	}
-	if !h.missCached("bogus000") {
+	if !h.missCached("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") {
 		t.Fatal("bogus sha not negative-cached after miss")
 	}
 
 	// Second call within TTL: must be served from the negative cache.
-	ref2, ok2 := h.probeCommitID(context.Background(), "bogus000")
+	ref2, ok2 := h.probeCommitID(context.Background(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if ok2 || ref2 != nil {
 		t.Fatalf("negative-cached sha should still miss; got ok=%v ref=%+v", ok2, ref2)
 	}
@@ -1456,22 +1430,22 @@ func TestProbeCommitID_TransientNotNegativeCached(t *testing.T) {
 	var calls atomic.Int32
 	repo := &mockProvider{repos: []source.Source{
 		// Even the owning source errors transiently (simulates upstream outage).
-		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "real", getMetaErr: context.DeadlineExceeded, getMetaCalls: &calls},
+		&mockSource{owner: "cyp", repoName: "cyp-apis", commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", getMetaErr: context.DeadlineExceeded, getMetaCalls: &calls},
 	}}
 	h := newTestCommitHandler(repo)
 	h.probeEnabled = true
 
-	if ref, ok := h.probeCommitID(context.Background(), "real"); ok || ref != nil {
+	if ref, ok := h.probeCommitID(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); ok || ref != nil {
 		t.Fatalf("transient failure should be a miss; got ok=%v ref=%+v", ok, ref)
 	}
-	if h.missCached("real") {
+	if h.missCached("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
 		t.Fatal("transient miss must not be negative-cached")
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("expected 1 GetMeta call, got %d", calls.Load())
 	}
 	// Retry: not negative-cached, so it probes again.
-	if _, ok := h.probeCommitID(context.Background(), "real"); ok {
+	if _, ok := h.probeCommitID(context.Background(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); ok {
 		t.Fatal("retry should still miss")
 	}
 	if calls.Load() != 2 {
@@ -1534,5 +1508,134 @@ func TestServeDownload_NonHeadShaServesThatCommit(t *testing.T) {
 	}
 	if bytes.Contains(respBody, []byte("HEAD-CONTENT")) {
 		t.Errorf("response must NOT serve HEAD's content; got %x", respBody)
+	}
+}
+
+// TestServeDownload_AfterRestart_ProbeResolvesUUID pins the post-restart
+// probe path: with an empty commitMap (no in-session GetCommits has run),
+// a Download request with a buf-issued 32-char UUID is resolved by
+// probeCommitID via the commitUUIDInverse + prefix-match path. The
+// probe derives the 28-char SHA prefix from the UUID, asks each
+// configured source for the prefix, validates the returned SHA starts
+// with the prefix, and registers the alias. This is the regression
+// guard for the prewarm removal: without the inverse, the probe
+// would 400 the request and a process restart would be observable
+// to the client as a foreign-id failure.
+func TestServeDownload_AfterRestart_ProbeResolvesUUID(t *testing.T) {
+	const headSha = "81353411f7b010d5b9ebeb1899066aac18a36701"
+	uuid, err := commitUUID(headSha)
+	if err != nil {
+		t.Fatalf("commitUUID(%q) unexpected error: %v", headSha, err)
+	}
+	prefix, err := commitUUIDInverse(uuid)
+	if err != nil {
+		t.Fatalf("commitUUIDInverse(%q) unexpected error: %v", uuid, err)
+	}
+	t.Logf("fixture: headSha=%s uuid=%s prefix=%s", headSha, uuid, prefix)
+
+	var sourceCalls atomic.Int32
+	// mockProvider is the connect-package provider. It serves the same
+	// head SHA for any commit arg the post-probe ServeDownload might
+	// try (the UUID, the prefix, the resolved SHA). Without byCommit
+	// set, it returns m.meta regardless of arg, mirroring the
+	// pre-restart production behavior of "HEAD lookup always returns
+	// the resolved commit".
+	repo := &mockProvider{
+		meta: content.Meta{Commit: headSha, DefaultBranch: "main"},
+		files: []content.File{
+			{Path: "test.proto", Data: []byte("syntax = \"proto3\";"), Hash: shake256.Hash{}},
+		},
+		repos: []source.Source{
+			&mockSource{
+				owner: "cyp", repoName: "cyp-apis",
+				commit:      headSha,
+				getMetaCalls: &sourceCalls,
+			},
+		},
+	}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+	h.probeNegativeTTL = 5 * time.Minute
+	h.probeTimeout = 2 * time.Second
+	// commitMap is intentionally empty (post-restart state — no in-session GetCommits).
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/buf.registry.module.v1.DownloadService/", h.ServeDownload)
+	mux.HandleFunc("/buf.registry.module.v1beta1.DownloadService/", h.ServeDownload)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	for _, path := range []string{
+		"/buf.registry.module.v1.DownloadService/Download",
+		"/buf.registry.module.v1beta1.DownloadService/Download",
+	} {
+		t.Run(path, func(t *testing.T) {
+			body := buildDownloadRequest(uuid)
+			resp, err := http.Post(server.URL+path, "application/proto", bytes.NewReader(body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				b, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200 (post-restart probe should resolve via inverse); body: %s", resp.StatusCode, b)
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			if len(respBody) == 0 {
+				t.Fatal("empty response body")
+			}
+		})
+	}
+	if sourceCalls.Load() < 1 {
+		t.Errorf("expected at least 1 source GetMeta call (probe fan-out), got %d", sourceCalls.Load())
+	}
+}
+
+// TestServeDownload_AfterRestart_ProbeMissesOnUnknownUUID pins the
+// safety net: when the 32-char UUID's first 14 bytes do NOT correspond
+// to any configured source's SHA, the probe must miss (no false
+// positive) and the request must 400. This is the prefix-match
+// validation closing the review.md finding #6: a wrong-source match
+// would silently alias a real commit id to a wrong module and serve
+// wrong content. Failing closed is the right tradeoff.
+func TestServeDownload_AfterRestart_ProbeMissesOnUnknownUUID(t *testing.T) {
+	// A 32-char UUID whose first 14 bytes are all-0xff — no configured
+	// source's HEAD SHA starts with "ff" * 14. The mockSource owns
+	// "0000000000000000000000000000000000000000" (starts with "00" * 14),
+	// so the prefix-match validation rejects the probe hit.
+	const (
+		unknownUUID = "ffffffffffffffffffffffffffffffff" // first 14 bytes = "ff" * 14
+		headSha     = "0000000000000000000000000000000000000000"
+	)
+	_ = unknownUUID // referenced below; declared here for clarity
+
+	repo := &mockProvider{
+		repos: []source.Source{
+			&mockSource{owner: "cyp", repoName: "cyp-apis", commit: headSha},
+		},
+	}
+	h := newTestCommitHandler(repo)
+	h.probeEnabled = true
+	h.probeNegativeTTL = 5 * time.Minute
+	h.probeTimeout = 2 * time.Second
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/buf.registry.module.v1beta1.DownloadService/", h.ServeDownload)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	body := buildDownloadRequest(unknownUUID)
+	resp, err := http.Post(
+		server.URL+"/buf.registry.module.v1beta1.DownloadService/Download",
+		"application/proto",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 400 (unknown UUID, probe must miss); body: %s", resp.StatusCode, b)
 	}
 }

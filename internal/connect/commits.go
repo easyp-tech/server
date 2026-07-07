@@ -49,16 +49,12 @@ type commitServiceHandler struct {
 	// so the fallback never guesses across multiple modules.
 	singleModule *moduleRef
 
-	// prewarmOnce guards prewarmHeads against double-execution.
-	prewarmOnce sync.Once
 	// missCache holds the time a commit_id was last confirmed absent from
 	// every configured source (probe all-fail). Used by probeCommitID to
 	// skip repeated upstream fan-out for known-bogus shas within ProbeTTL.
 	missCache map[string]time.Time
 
 	// runtime knobs (set in connect.New from config.Connect.WithDefaults)
-	prewarmEnabled   bool
-	prewarmTimeout   time.Duration
 	probeEnabled     bool
 	probeNegativeTTL time.Duration
 	probeTimeout     time.Duration
@@ -905,100 +901,6 @@ func (h *commitServiceHandler) resolveForeignCommitID(commitID string) *moduleRe
 	return nil
 }
 
-// registerResolved records a resolved module for a commit id (the canonical
-// git sha) under commitMu. commitMap[sha]=ref lets future Downloads of the
-// same sha hit directly. infoCache is populated with a digest-less entry —
-// ServeDownload's miss-branch recomputes files+digest on first use, so the
-// digest field is not load-bearing here.
-//
-// If an infoCache entry already exists for the module (e.g. a prior
-// ServeGraph computed the digest and cached files), its digest is preserved —
-// only the resolved-commit identity is refreshed. Without this, a late
-// pre-warm would clobber a computed digest with nil and the next cache-hit
-// Download would serve a zero digest.
-func (h *commitServiceHandler) registerResolved(sha, owner, module string) {
-	key := owner + "/" + module
-	// The buf client now expects a 32-char dashless UUID; the SHA is only
-	// useful as a key for talking to upstream git. Register BOTH so the
-	// prewarm path makes the UUID the buf client will send hit commitMap
-	// directly on the first Download, and the SHA alias preserves a
-	// working lookup for any caller (probe, future debug tool) that
-	// happens to send a raw sha.
-	uuid, err := commitUUID(sha)
-	if err != nil {
-		// No http.ResponseWriter in scope here — this path runs in
-		// background (prewarmHeads) and request-scoped (probeCommitID)
-		// contexts. Log with the proxy logger + a background context so
-		// the failure is observable without a request to attach to.
-		h.api.log.LogAttrs(context.Background(), slog.LevelWarn, "internal: commitUUID failure",
-			slog.String("error_class", "internal"),
-			slog.String("commit_id", sha),
-			slog.String("upstream_error", err.Error()))
-		return
-	}
-	h.commitMu.Lock()
-	h.commitMap[uuid] = moduleRef{owner: owner, module: module}
-	if sha != "" && sha != uuid {
-		h.commitMap[sha] = moduleRef{owner: owner, module: module}
-	}
-	if existing, ok := h.infoCache[key]; ok {
-		existing.commitID = uuid
-		existing.commit = sha
-		existing.ownerID = owner
-		existing.moduleID = key
-		h.infoCache[key] = existing
-	} else {
-		h.infoCache[key] = commitInfoCache{
-			commitID: uuid,
-			commit:   sha,
-			ownerID:  owner,
-			moduleID: key,
-		}
-	}
-	h.commitMu.Unlock()
-}
-
-// prewarmHeads resolves the current HEAD commit of every configured module
-// and registers it, so that a client sending a cached current-HEAD sha hits
-// the commit map without a prior in-session GetCommits. Best-effort and
-// idempotent (prewarmOnce): failures are logged and skipped; a later
-// probeCommitID call still recovers any sha pre-warm missed. GetMeta-only —
-// no file fetch. Intended to run in a background goroutine launched from
-// connect.New.
-func (h *commitServiceHandler) prewarmHeads() {
-	h.prewarmOnce.Do(func() {
-		sources := h.api.repo.Repositories()
-		log := h.api.log.With(slog.String("component", "prewarm"))
-		log.LogAttrs(context.Background(), slog.LevelInfo, "prewarm starting",
-			slog.Int("sources", len(sources)),
-			slog.Duration("per_call_timeout", h.prewarmTimeout))
-		var ok, fail int
-		for _, s := range sources {
-			owner, module := s.Owner(), s.RepoName()
-			if owner == "" || module == "" {
-				continue
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), h.prewarmTimeout)
-			meta, err := s.GetMeta(ctx, "") // empty commit = HEAD
-			cancel()
-			if err != nil || meta.Commit == "" {
-				fail++
-				log.LogAttrs(context.Background(), slog.LevelWarn, "prewarm source miss",
-					slog.String("owner", owner), slog.String("module", module),
-					slog.String("repo", module))
-				continue
-			}
-			h.registerResolved(meta.Commit, owner, module)
-			ok++
-			log.LogAttrs(context.Background(), slog.LevelInfo, "prewarm source resolved",
-				slog.String("owner", owner), slog.String("module", module),
-				slog.String("repo", module), slog.String("commit", meta.Commit))
-		}
-		log.LogAttrs(context.Background(), slog.LevelInfo, "prewarm complete",
-			slog.Int("resolved", ok), slog.Int("failed", fail))
-	})
-}
-
 // missCached reports whether sha was recently confirmed absent from every
 // configured source (within ProbeNegativeTTL). Caller must NOT hold commitMu.
 func (h *commitServiceHandler) missCached(sha string) bool {
@@ -1053,21 +955,65 @@ func (h *commitServiceHandler) sweepMisses(ctx context.Context) {
 // Callers must NOT hold commitMu. ctx should be the request context so a
 // disconnecting client bounds the fan-out; each per-source call additionally
 // gets its own timeout (probeTimeout).
-func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*moduleRef, bool) {
-	if sha == "" || h.missCached(sha) {
+// probeCommitID resolves a Download commit_id that was neither minted
+// in-session nor recoverable by the single-module fallback, by asking
+// each configured source whether it owns the id. Three input shapes
+// are supported:
+//
+//   - raw 40- or 64-char SHA: probed as-is. A git sha is unique to one
+//     repo, so at most one source succeeds.
+//   - buf-issued 32-char UUID: the SHA prefix is recovered via
+//     commitUUIDInverse (the first 14 bytes of the original SHA), and
+//     each source is probed with the prefix. The returned meta.Commit
+//     MUST start with the recovered prefix — otherwise the source does
+//     not own this UUID and the probe must miss (prefix-match
+//     validation closes review.md finding #6: a wrong-source match
+//     would silently alias a real commit id to a wrong module).
+//   - anything else: not a SHA, not a UUID — providers cannot resolve
+//     it, so the probe records a miss and returns.
+//
+// On hit, registerResolvedAlias stores both the buf-issued id (the
+// primary key the client will use) and the resolved SHA (as an alias
+// for any caller that sends a raw sha). On all-fail, the id is
+// negative-cached so retries within TTL do not re-probe.
+//
+// Callers must NOT hold commitMu. ctx should be the request context so
+// a disconnecting client bounds the fan-out; each per-source call
+// additionally gets its own timeout (probeTimeout).
+func (h *commitServiceHandler) probeCommitID(ctx context.Context, id string) (*moduleRef, bool) {
+	if id == "" || h.missCached(id) {
 		return nil, false
 	}
 	// Re-check commitMap under the lock: a concurrent resolver may have
-	// already registered this sha while we were waiting on the semaphore.
+	// already registered this id while we were waiting on the semaphore.
 	h.commitMu.RLock()
-	ref, already := h.commitMap[sha]
+	ref, already := h.commitMap[id]
 	h.commitMu.RUnlock()
 	if already {
 		r := ref
 		return &r, true
 	}
 
-	// Bound concurrent probes so a flood of distinct unknown shas cannot
+	// If id is a buf-issued UUID, derive the SHA prefix and probe with the
+	// prefix. The 14-byte recovery is lossy but 2^112 — sufficient to
+	// identify a single source among the configured set. The prefix-match
+	// validation below rules out collisions.
+	probeArg := id
+	if isUUID(id) {
+		prefix, err := commitUUIDInverse(id)
+		if err != nil {
+			// id looks UUID-shaped but isn't hex — treat as a miss.
+			h.rememberMiss(id)
+			return nil, false
+		}
+		probeArg = prefix
+	} else if !isSHA(id) {
+		// Not a UUID, not a SHA — providers can't resolve it.
+		h.rememberMiss(id)
+		return nil, false
+	}
+
+	// Bound concurrent probes so a flood of distinct unknown ids cannot
 	// amplify to unbounded upstream load. Non-blocking acquire: if the cap is
 	// reached, decline (the caller 400s; the client retries and hits the
 	// negative cache only after a probe eventually runs).
@@ -1086,8 +1032,9 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 	}
 
 	type probeResult struct {
-		ref moduleRef
-		ok  bool
+		ref    moduleRef
+		commit string
+		ok     bool
 	}
 	// Buffered enough to never block a successful goroutine; first success wins.
 	results := make(chan probeResult, len(sources))
@@ -1103,7 +1050,7 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 			defer wg.Done()
 			pctx, cancel := context.WithTimeout(ctx, h.probeTimeout)
 			defer cancel()
-			meta, err := s.GetMeta(pctx, sha)
+			meta, err := s.GetMeta(pctx, probeArg)
 			if err != nil {
 				if isTransientErr(err) {
 					transient.Store(true)
@@ -1113,9 +1060,17 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 			if meta.Commit == "" {
 				return
 			}
+			// Prefix-match validation: when probeArg is a SHA prefix
+			// (28 chars from commitUUIDInverse), the source's commit
+			// MUST start with it. Otherwise the collision went the wrong
+			// way and the source does not actually own this UUID.
+			if isUUID(id) && !strings.HasPrefix(meta.Commit, probeArg) {
+				return
+			}
 			results <- probeResult{
-				ref: moduleRef{owner: s.Owner(), module: s.RepoName()},
-				ok:  true,
+				ref:    moduleRef{owner: s.Owner(), module: s.RepoName()},
+				commit: meta.Commit,
+				ok:     true,
 			}
 		}(s)
 	}
@@ -1123,17 +1078,50 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, sha string) (*
 	close(results)
 
 	for r := range results {
-		// First (only) success. Register alias and return.
-		h.registerResolved(sha, r.ref.owner, r.ref.module)
+		// First (only) success. Register both the buf-issued id and the
+		// resolved SHA as aliases so future identical requests hit
+		// directly.
+		h.registerResolvedAlias(id, r.commit, r.ref.owner, r.ref.module)
 		ref := r.ref
 		return &ref, true
 	}
 	// Only negative-cache when every source returned a definitive not-found.
-	// A transient failure (timeout/network) leaves the sha retryable.
+	// A transient failure (timeout/network) leaves the id retryable.
 	if !transient.Load() {
-		h.rememberMiss(sha)
+		h.rememberMiss(id)
 	}
 	return nil, false
+}
+
+// registerResolvedAlias writes a commit id → moduleRef mapping and the
+// matching infoCache entry. The id arg is what the buf client sent
+// (typically a buf-issued 32-char UUID); sha is what the upstream
+// resolved to (a 40- or 64-char hex). Both are stored in commitMap so
+// future identical requests hit directly, and sha is also kept as an
+// alias for any caller (debug tool, foreign-id probe) that sends a
+// raw sha.
+func (h *commitServiceHandler) registerResolvedAlias(id, sha, owner, module string) {
+	key := owner + "/" + module
+	h.commitMu.Lock()
+	h.commitMap[id] = moduleRef{owner: owner, module: module}
+	if sha != "" && sha != id {
+		h.commitMap[sha] = moduleRef{owner: owner, module: module}
+	}
+	if existing, ok := h.infoCache[key]; ok {
+		existing.commitID = id
+		existing.commit = sha
+		existing.ownerID = owner
+		existing.moduleID = key
+		h.infoCache[key] = existing
+	} else {
+		h.infoCache[key] = commitInfoCache{
+			commitID: id,
+			commit:   sha,
+			ownerID:  owner,
+			moduleID: key,
+		}
+	}
+	h.commitMu.Unlock()
 }
 
 // isTransientErr reports whether err looks like a transient upstream failure

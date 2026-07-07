@@ -182,7 +182,7 @@ func TestServeDownload_UnknownCommitID_ReturnsBadRequest(t *testing.T) {
 		meta:  content.Meta{Commit: "abc123", DefaultBranch: "main"},
 		files: []content.File{{Path: "x.proto", Data: []byte(`syntax = "proto3";`), Hash: shake256.Hash{}}},
 	}
-	// No prewarm: registerResolved is never called, commitMap stays empty.
+	// No prewarm: registerResolvedAlias is never called, commitMap stays empty.
 	srv := httptest.NewServer(testMux(p))
 	defer srv.Close()
 

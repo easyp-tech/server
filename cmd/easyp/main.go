@@ -56,8 +56,6 @@ func main() {
 		handler = func() *http.ServeMux {
 			cc := cfg.Connect.WithDefaults()
 			return connect.NewWithConfig(log, storage, cfg.Domain, connect.CommitResolution{
-				PrewarmEnabled:   cc.Prewarm.Enabled != nil && *cc.Prewarm.Enabled,
-				PrewarmTimeout:   cc.Prewarm.PerCallTimeout,
 				ProbeEnabled:     cc.Probe.Enabled != nil && *cc.Probe.Enabled,
 				ProbeNegativeTTL: cc.Probe.NegativeTTL,
 				ProbeTimeout:     cc.Probe.PerCallTimeout,
