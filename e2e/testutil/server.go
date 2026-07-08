@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,4 +201,124 @@ deps:
 	}
 
 	return exitCode, stderr.String(), lockContent
+}
+
+// RunBufGenerateWithPinnedLock creates a minimal buf module in a temp
+// directory, runs "buf mod update" against the proxy at the given port,
+// overwrites the resulting buf.lock's commit: line with pinnedCommit (a
+// 32-char dashless buf-issued UUID), and then runs "buf generate" against
+// the overwritten lock. Returns the exit code of "buf generate", the
+// stderr it produced, and the list of generated gen/go/google/type/*.pb.go
+// files on success (nil on failure).
+//
+// The temp workspace contains:
+//   - buf.yaml: deps: [127.0.0.1:<port>/googleapis/googleapis]
+//   - dummy.proto: syntax = "proto3"; package dummy;
+//   - buf.gen.yaml: pinned remote plugin buf.build/protocolbuffers/go:v1.28.1
+//     with out: gen/go
+//
+// This exercises the read-path that fires AFTER the client has loaded
+// buf.lock: the proxy must resolve a pre-existing 32-char UUID via its
+// infoCache/commitMap or the post-restart probeCommitID path, and
+// return content for that commit (NOT HEAD, NOT a 400 on a "foreign" id).
+func RunBufGenerateWithPinnedLock(t *testing.T, bufBinary string, port int, pinnedCommit string) (int, string, []string) {
+	t.Helper()
+	return runBufGenerate(t, bufBinary, port, pinnedCommit)
+}
+
+// runBufGenerate is the private implementation behind
+// RunBufGenerateWithPinnedLock. See that function for the contract.
+func runBufGenerate(t *testing.T, bufBinary string, port int, pinnedCommit string) (int, string, []string) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+
+	// Write buf.yaml pointing at the proxy.
+	depRef := "127.0.0.1:" + strconv.Itoa(port) + "/googleapis/googleapis"
+	bufYAML := fmt.Sprintf(`version: v1
+deps:
+  - %s
+`, depRef)
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600), "writing buf.yaml")
+
+	// Write a dummy proto so modern buf CLI versions don't complain about
+	// an empty workspace.
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0600), "writing dummy.proto")
+
+	// Write buf.gen.yaml. The remote plugin version is pinned; the v1
+	// buf.gen.yaml format is understood by both v1.30.1 and v1.69.0.
+	bufGenYAML := `version: v1
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.28.1
+    out: gen/go
+`
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.gen.yaml"), []byte(bufGenYAML), 0600), "writing buf.gen.yaml")
+
+	// Step 1: buf mod update to populate a real buf.lock.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, bufBinary, "mod", "update")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		if err := cmd.Run(); err != nil {
+			return 1, "buf mod update failed: " + stderr.String(), nil
+		}
+	}
+
+	// Step 2: read buf.lock, extract the original commit, overwrite it
+	// with the pinned UUID. extractCommitFromLock lives in package e2e
+	// (e2e/ref_test.go), so we duplicate the regex inline here (the
+	// testutil package cannot import the e2e package).
+	lockPath := filepath.Join(tmpDir, "buf.lock")
+	lockContent, err := os.ReadFile(lockPath)
+	require.NoError(t, err, "reading buf.lock")
+
+	commitLineRE := regexp.MustCompile(`(?m)^[ \t]+commit:[ \t]+(\S+)\s*$`)
+	m := commitLineRE.FindSubmatch(lockContent)
+	require.NotNil(t, m, "no commit: line found in buf.lock:\n%s", lockContent)
+	originalCommit := string(m[1])
+
+	modified := strings.Replace(string(lockContent), originalCommit, pinnedCommit, 1)
+	require.NotEqual(t, string(lockContent), modified,
+		"overwrite did not change buf.lock: commit %q not found", originalCommit)
+	require.NoError(t, os.WriteFile(lockPath, []byte(modified), 0600), "writing overwritten buf.lock")
+
+	// Step 3: buf generate with the overwritten lock. Longer timeout
+	// than the mod update step because the plugin fetch + codegen
+	// takes longer.
+	{
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, bufBinary, "generate")
+		cmd.Dir = tmpDir
+		cmd.Env = os.Environ()
+
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+
+		exitErr := cmd.Run()
+		exitCode := 0
+		if exitErr != nil {
+			if exitCodeErr, ok := exitErr.(*exec.ExitError); ok {
+				exitCode = exitCodeErr.ExitCode()
+			} else {
+				exitCode = 1
+			}
+		}
+
+		if exitCode != 0 {
+			return exitCode, stderr.String(), nil
+		}
+
+		// On success, collect the generated files.
+		matches, _ := filepath.Glob(filepath.Join(tmpDir, "gen", "go", "google", "type", "*.pb.go"))
+		return 0, stderr.String(), matches
+	}
 }
