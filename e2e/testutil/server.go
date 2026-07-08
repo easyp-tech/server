@@ -247,9 +247,12 @@ deps:
 
 	// Write buf.gen.yaml. The remote plugin version is pinned; the v1
 	// buf.gen.yaml format is understood by both v1.30.1 and v1.69.0.
+	// Uses the "plugin:" field (not the deprecated "remote:" field) —
+	// the "remote:" field was the alpha-remote-generation API and has
+	// been removed in v1.69.0+ (and is flagged as deprecated by v1.30.1).
 	bufGenYAML := `version: v1
 plugins:
-  - remote: buf.build/protocolbuffers/go:v1.28.1
+  - plugin: buf.build/protocolbuffers/go:v1.28.1
     out: gen/go
 `
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.gen.yaml"), []byte(bufGenYAML), 0600), "writing buf.gen.yaml")
