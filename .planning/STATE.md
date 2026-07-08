@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
 status: executing
-last_updated: "2026-07-08T11:31:50.037Z"
-last_activity: 2026-07-08 -- Phase 22 planning complete
+last_updated: "2026-07-08T12:00:13.558Z"
+last_activity: 2026-07-08 -- Phase 22 execution started
 progress:
   total_phases: 12
   completed_phases: 11
@@ -21,14 +21,14 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
 
-**Current focus:** Phase 21 — we-need-another-e2e-test-we-are-doing-buf-generate-with-buf
+**Current focus:** Phase 22 — fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto
 
 ## Current Position
 
-Phase: 21 (we-need-another-e2e-test-we-are-doing-buf-generate-with-buf) — EXECUTING
+Phase: 22 (fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto) — EXECUTING
 Plan: 1 of 1
-Status: Ready to execute
-Last activity: 2026-07-08 -- Phase 22 planning complete
+Status: Executing Phase 22
+Last activity: 2026-07-08 -- Phase 22 execution started
 
 Progress: [██████████] 100%
 
