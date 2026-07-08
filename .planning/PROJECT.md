@@ -84,5 +84,9 @@ The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI 
 
 This document evolves at phase transitions and milestone boundaries.
 
+## Current State
+
+Phase 22 complete (2026-07-08) — v1.30.1 v1alpha1 read-path now resolves 32-char buf UUIDs to 40-char git SHAs via the Phase 18 probe ladder before provider GetFiles calls. PR-22-1/2/3/5 unit-verified. PR-22-4 live e2e (TestGenerateWithPinnedBufLock/v1.30.1) blocked by provider-transport TLS issue to raw.githubusercontent.com (handler fix independently proven) — tracked in 22-HUMAN-UAT.md. Code review (22-REVIEW.md) flagged CR-01 stale-digest + 6 warnings as future-hardening candidates.
+
 ---
-*Last updated: 2026-07-06 after v1.3 milestone completion (Phases 11–16, including Phase 16 commit-id format cutover)*
+*Last updated: 2026-07-08 after Phase 22 completion (v1.30.1 v1alpha1 read-path UUID resolution)*
