@@ -218,6 +218,16 @@ Plans:
 
 - [ ] TBD (run /gsd-plan-phase 20 to break down)
 
+### Phase 21: we need another e2e test: we are doing buf generate with buf.lock pointing to the valid bt not the latest commit. This is valid situation and should work with v1 and v2
+
+**Goal:** Add a single e2e test (`TestGenerateWithPinnedBufLock`) that proves the proxy can serve a `buf generate` request when `buf.lock` pins a valid (but non-HEAD) commit. The test runs for every cached buf version (v1.30.1 v1alpha1 + v1.69.0 v1beta1), derives the pinned UUID from a real googleapis tag via `git ls-remote` + the test-side `commitUUIDForTest` byte-table mirror, overwrites `buf.lock`'s `commit:` line with the pinned UUID, and asserts `buf generate` exits 0 + generates at least one non-empty `gen/go/google/type/*.pb.go` file whose content contains `package google.type`. This is the regression guard for the Phase 18/20 read-path (infoCache writeback + post-restart `probeCommitID`): a future regression that 400s the proxy on a pre-existing UUID or serves wrong content is caught at CI time.
+**Requirements**: SC-21-1, SC-21-2 (derived from this plan; see 21-01-PLAN.md)
+**Depends on:** Phase 20
+**Plans:** 1 plan
+Plans:
+
+- [x] [21-01](./phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-/21-01-PLAN.md) — Adopt new e2e drafts (generate_test.go + testutil/server.go additions); 2 tasks: (1) add `RunBufGenerateWithPinnedLock` public wrapper + `runBufGenerate` private helper in testutil/server.go (writes buf.yaml + buf.gen.yaml + dummy.proto, runs `buf mod update`, overwrites the lock's `commit:` line via `strings.Replace(..., 1)`, then runs `buf generate`); (2) add `e2e/generate_test.go` with `TestGenerateWithPinnedBufLock` matrix test, verify it compiles + lists + skips cleanly without `EASYP_GH_TOKEN`, commit both files
+
 ---
 
-*Roadmap last updated: 2026-07-07*
+*Roadmap last updated: 2026-07-08*
