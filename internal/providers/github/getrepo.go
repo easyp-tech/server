@@ -34,8 +34,11 @@ func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (co
 		return meta, fmt.Errorf("investigating %q/%q: %w", owner, repoName, err)
 	}
 
-	// Three branches:
+	// Four branches:
 	//   - commit == "":        no ref was supplied; keep HEAD from getRepo.
+	//   - commit == DefaultBranch: client asked for the default branch by
+	//                          name (the v1.30.1 v1alpha1 case); keep
+	//                          HEAD from getRepo, no repos.GetCommit.
 	//   - isSHA(commit):       raw SHA fast path (40/64 lowercase hex).
 	//   - non-SHA non-empty:   treat as a ref and resolve via GitHub's
 	//                          repos.GetCommit (accepts ref names, short
@@ -46,7 +49,17 @@ func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (co
 	//                          and broke 40/64-char SHAs that weren't at
 	//                          HEAD.
 	if commit != "" {
-		if isSHA(commit) {
+		if commit == meta.DefaultBranch {
+			// Client asked for the default branch by name. meta.Commit
+			// already holds its HEAD SHA (set by getRepo via
+			// repos.GetBranch), so we can return without a second
+			// round-trip. Without this carve-out, repos.GetCommit(ctx,
+			// owner, repoName, "main", nil) hits GitHub's /commits/main
+			// endpoint, which expects a SHA and rejects branch names
+			// with 422 "No commit found for SHA: main" (this is the
+			// v1.30.1 v1alpha1 path: the client sends reference="main"
+			// via modulepins.go:46).
+		} else if isSHA(commit) {
 			meta.Commit = commit
 		} else {
 			rc, _, err := c.repos.GetCommit(ctx, owner, repoName, commit, nil)
