@@ -21,7 +21,26 @@ func (a *api) DownloadManifestAndBlobs(
 	*connect.Response[registry.DownloadManifestAndBlobsResponse],
 	error,
 ) {
-	files, err := a.repo.GetFiles(ctx, req.Msg.GetOwner(), req.Msg.GetRepository(), req.Msg.GetReference())
+	// Resolve a buf-issued 32-char UUID Reference to the 40-/64-char git SHA
+	// before hitting the provider. GitHub's git-trees API (and other VCS
+	// providers) reject 32-char UUIDs with a 404; the v1beta1 ServeDownload
+	// path already applies this resolution (Phase 18), but the v1alpha1
+	// handler on *api was never wired to the ladder. isUUID + CommitResolver
+	// is the only path — never call commitUUIDInverse or probeCommitID
+	// directly from here (RESEARCH.md "Don't Hand-Roll" table). The
+	// nil-guard is defense-in-depth (NewWithConfig always sets the pointer).
+	ref := req.Msg.GetReference()
+	if isUUID(ref) && a.commitResolver != nil {
+		resolved, err := a.commitResolver.resolveCommitForRead(
+			ctx, req.Msg.GetOwner(), req.Msg.GetRepository(), ref,
+		)
+		if err != nil {
+			return nil, asConnectError(fmt.Errorf("resolving commit uuid %q: %w", ref, err))
+		}
+		ref = resolved
+	}
+
+	files, err := a.repo.GetFiles(ctx, req.Msg.GetOwner(), req.Msg.GetRepository(), ref)
 	if err != nil {
 		return nil, asConnectError(fmt.Errorf("a.repo.GetRepository: %w", err))
 	}

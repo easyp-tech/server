@@ -20,6 +20,19 @@ type provider interface {
 	Repositories() []source.Source
 }
 
+// CommitResolver resolves a buf-issued commit id (a 32-char dashless UUID
+// minted by commitUUID) to the 40- or 64-char git SHA that the upstream
+// source actually points at. It reuses the same commitMap /
+// resolveForeignCommitID / probeCommitID ladder as ServeDownload so the
+// v1alpha1 DownloadManifestAndBlobs path inherits the Phase 18 prefix-match
+// validation and negative caching. Returns an error when the id cannot be
+// resolved by any configured source — callers MUST surface the error and
+// MUST NOT fall back to HEAD (RESEARCH.md anti-pattern "Returning HEAD when
+// resolution fails").
+type CommitResolver interface {
+	resolveCommitForRead(ctx context.Context, owner, module, id string) (sha string, err error)
+}
+
 // CommitResolution configures the buf v1 commit-id resolution enhancements in
 // commitServiceHandler: the upstream sha probe used on a Download cache miss.
 // It is the connect-package mirror of the user-facing connect config — kept
@@ -38,8 +51,9 @@ type api struct {
 	v1alpha1connect.UnimplementedRepositoryServiceHandler
 	v1alpha1connect.UnimplementedResolveServiceHandler
 	v1alpha1connect.UnimplementedDownloadServiceHandler
-	repo   provider
-	domain string
+	repo           provider
+	domain         string
+	commitResolver CommitResolver // assigned in NewWithConfig; nil-guarded at call sites
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -102,6 +116,11 @@ func NewWithConfig(
 		probeTimeout:    cfg.ProbeTimeout,
 		probeSem:        make(chan struct{}, maxConcurrentProbes),
 	}
+	// Wire the commit handler back to *api so v1alpha1 Connect-RPC handlers
+	// (DownloadManifestAndBlobs) can resolve UUIDs through the Phase 18 ladder.
+	// Safe post-construction mutation: NewWithConfig runs single-threaded at
+	// startup and all handler invocations happen after this function returns.
+	a.commitResolver = commitHandler
 	if commitHandler.probeEnabled && commitHandler.probeNegativeTTL > 0 {
 		go commitHandler.sweepMisses(context.Background())
 	}
