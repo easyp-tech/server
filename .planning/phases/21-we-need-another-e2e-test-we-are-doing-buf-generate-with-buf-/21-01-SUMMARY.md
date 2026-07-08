@@ -104,13 +104,64 @@ completed: 2026-07-08
 - **Verification:** `go build ./e2e/...` exits 0; `go vet ./e2e/...` exits 0; the YAML content is `out: gen/go` (unquoted) as the plan's `action` block prescribes.
 - **Committed in:** `a2d6350` (Task 1 commit)
 
+**2. [Rule 2 - Missing Critical] Replaced deprecated `remote:` field with `plugin:` in generated buf.gen.yaml**
+
+- **Found during:** Live test run with `EASYP_GH_TOKEN` (third-party validation: the test caught its own infrastructure problem)
+- **Issue:** The plan's buf.gen.yaml used `remote: buf.build/protocolbuffers/go:v1.28.1` (the alpha-remote-generation API). Both cached buf versions reject this:
+  - **v1.69.0:** `Failure: decode buf.gen.yaml: yaml: unmarshal errors: line 3: field remote not found` — the alpha API was removed entirely.
+  - **v1.30.1:** `Failure: the remote field no longer works as the remote generation alpha has been deprecated` — the alpha API is still recognized but flagged as deprecated and rejected.
+- **Fix:** Changed the YAML to `plugin: buf.build/protocolbuffers/go:v1.28.1` (the modern syntax that `buf generate --help` itself documents as the canonical example). Both versions understand this field.
+- **Files modified:** `e2e/testutil/server.go`
+- **Verification:** After the fix, both subtests progress past buf.gen.yaml decoding; the next failure mode is in the proxy itself (see Issues Encountered below).
+- **Committed in:** `e0c79b1` (separate fix commit, after Tasks 1 & 2)
+
 ---
 
-**Total deviations:** 1 plan-verification-spec discrepancy, no code changes required. **Impact:** None — the implementation matches the plan's `action` and `acceptance_criteria`; the plan's `<verify>` command was over-specified.
+**Total deviations:** 2 (1 plan-verification-spec discrepancy, 1 deprecated-syntax auto-fix). **Impact:** The deprecated-syntax fix unblocks the live test run; the plan-verification discrepancy was a no-op.
 
 ## Issues Encountered
 
-None.
+Running the test live with `EASYP_GH_TOKEN` revealed two real proxy-level findings (the test is a real regression guard — it caught things the unit + integration tests missed):
+
+### Finding 1: v1.30.1 v1alpha1 path passes 32-char UUIDs directly to GitHub's tree API (REAL PROXY REGRESSION)
+
+**What happened:** When `buf v1.30.1` runs `buf generate` against a `buf.lock` that pins a 32-char buf-issued UUID, the v1alpha1 client sends the UUID directly to the proxy's `DownloadManifestAndBlobs` handler (the client uses the lock to know which commit, and sends the UUID verbatim). The proxy then calls `c.git.GetTree(ctx, owner, repoName, UUID, true)`, which translates to `GET https://api.github.com/repos/googleapis/googleapis/git/trees/27156597fdf440fb8077004434d44091?recursive=1`. GitHub returns **404 Not Found** because the tree API expects a 40-char git SHA, not a 32-char buf UUID.
+
+**Why this is a real regression:** Phase 18 (commit `4fc6f28`) added `commitUUIDInverse` in `internal/connect/commits_helpers.go:116-132` to recover SHAs from 32-char UUIDs (used in the `buf mod update` / `probeCommitID` post-restart path). But the v1alpha1 `DownloadManifestAndBlobs` read-path does NOT apply it. The Phase 19/20 e2e tests caught the v1beta1 read-path regression (Phase 20 fixed it), but they used `buf mod update` only, which doesn't exercise the v1alpha1 `Download` path.
+
+**Fix scope:** Out of scope for Phase 21 (a test-only phase). The fix needs to:
+
+- Apply `commitUUIDInverse` in the v1alpha1 `Download` handler chain (or earlier, in the proxy's commitMap/probe path) when a 32-char UUID is the incoming `commit_id`.
+- Add an e2e test for the v1alpha1 read-path with a stale/pinned UUID (the test added in this phase covers v1.30.1's `DownloadManifestAndBlobs` call, so it would automatically cover the fix).
+
+**Follow-up:** A new phase (proposed `22-fix-v1alpha1-download-uuid-handling`) is needed to fix the proxy and re-run this test to confirm it passes.
+
+### Finding 2: v1.69.0 subtest is not actually testing the pinned-UUID path (TEST DESIGN ISSUE, not a proxy bug)
+
+**What happened:** The v1.69.0 client, when running `buf generate` against a `buf.lock` pinning a specific commit, does NOT send the pinned commit to the proxy. The proxy log shows:
+
+- `GetCommits` (resolve_meta) with `commit: ""` → proxy resolves to HEAD (`99f54e6513f09d8df1707a6c553b0a3c6ef9b5fb`)
+- `GetCommits` (compute_digest) at HEAD → proxy tries to fetch the file tree at HEAD from `raw.githubusercontent.com` → `net/http: TLS handshake timeout`
+
+So the v1.69.0 subtest is exercising the proxy's HEAD fetch, not the pinned-UUID read-path. The plan's prediction ("For v1.69.0 the pinned UUID is the commit the proxy must serve") was incorrect — the v1.69.0 client ignores the `buf.lock` for `buf generate` and just asks the proxy for HEAD. (This is also why the test isn't a regression guard for the v1.30.1-style bug — the v1.69.0 subtest would pass even if the proxy were returning HEAD for every UUID.)
+
+**Why the v1.69.0 subtest times out:** The proxy uses the default `go-github` HTTP client (no custom transport in `internal/providers/github/client.go`). Direct `curl` to `raw.githubusercontent.com` from this host returns 200 OK, so the network is fine. The TLS handshake timeout appears to be specific to the go-github HTTP client's connection pooling / TLS state. A future CI environment with a fresh process per run is unlikely to hit this. (The smoke test `TestSmokeBufModUpdate` doesn't exercise this path — `buf mod update` only fetches metadata, not the file tree.)
+
+**Fix scope:** Out of scope for Phase 21. The v1.69.0 subtest's pinned-UUID coverage claim was wrong; the test is currently a HEAD-fetch regression guard, which is a weaker (but still valid) signal. To actually exercise the pinned-UUID read-path in v1.69.0, the test design would need to:
+
+- Pin a SHA in the `buf.yaml` (not a UUID in the lock), or
+- Use `buf mod update` + read-back + `buf generate` in a way that forces the v1.69.0 client to send the pinned commit to the proxy.
+
+A new phase should redesign the v1.69.0 subtest to actually exercise the pinned-UUID path.
+
+### Summary of live-test findings
+
+| Subtest | Outcome | Root cause | Status |
+| --- | --- | --- | --- |
+| `v1.30.1` | FAIL | v1alpha1 `Download` handler passes 32-char UUID to GitHub tree API (404); needs `commitUUIDInverse` in this path | Real proxy regression; deferred to follow-up phase |
+| `v1.69.0` | FAIL | Persistent TLS handshake timeout fetching HEAD's tree from `raw.githubusercontent.com`; also: this subtest is not actually testing the pinned-UUID path (test design issue) | Network/environmental; subtest needs redesign to actually cover the pinned-UUID path |
+
+**The v1.30.1 subtest is the valuable one — it caught a real regression that the unit + integration tests missed. The v1.69.0 subtest is also valuable as a HEAD-fetch regression guard, but it does not cover the pinned-UUID path as the plan claimed.**
 
 ## User Setup Required
 
@@ -118,28 +169,30 @@ None - no external service configuration required. The test reuses the existing 
 
 ## Next Phase Readiness
 
-- Phase 21 deliverables complete; both success criteria (SC-21-1 matrix; SC-21-2 v1+v2 coverage) met by the new `TestGenerateWithPinnedBufLock`.
-- The proxy's pinned-lock read-path now has a real-server e2e regression guard: any future change that breaks the path (e.g. breaking the `infoCache` writeback in `ServeGraph`, breaking `probeCommitID` in `commits.go:564-592`, breaking the `commitUUIDInverse` prefix-match check in `commits_helpers.go:116-132`) is caught at CI time when a token + cached buf binaries are present.
-- No new dependencies, no `go.mod` / `go.sum` changes.
+- Phase 21 deliverables complete; the test is committed and skips cleanly when the token is unset.
+- The test **caught a real proxy regression in the v1.30.1 v1alpha1 read-path** (passes 32-char UUID to GitHub tree API without `commitUUIDInverse`). This is the same class of bug Phase 18 fixed for the v1beta1 path; it just wasn't exercised by the v1beta1-only e2e tests.
+- **Recommended follow-up phase:** `22-fix-v1alpha1-download-uuid-handling` — apply `commitUUIDInverse` in the v1alpha1 `Download` chain; re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass.
+- **Recommended follow-up phase:** `23-fix-v1beta1-pinned-uuid-test-design` — redesign the v1.69.0 subtest to actually exercise the pinned-UUID path (e.g., pin a SHA in `buf.yaml` instead of a UUID in the lock, so the v1.69.0 client is forced to send the pinned commit to the proxy).
 - The existing testutil unit tests (`TestDefaultTestConfig`, `TestConfigGeneration`, `TestRequireEnvToken_Skips`, `TestVersionConstants`, `TestGetBuf_CachePath`) continue to pass; the testutil changes do not regress any helper.
-- Token-less CI (this environment) cannot exercise SC-21-1 / SC-21-2 directly; those are validated by the test infrastructure (compile + list + skip) and by the fact that the production code path they exercise (Phase 18 / Phase 20) is unit-tested and integration-tested elsewhere. A future CI environment with the token and cached buf binaries will exercise the full path.
+- The buf.gen.yaml `remote:` → `plugin:` fix is a permanent improvement: the alpha-remote-generation API is deprecated and will be removed in future buf versions.
 
 ## Self-Check: PASSED
 
-- All commits exist (`git log --oneline | grep 21-01` — 2 commits: `a2d6350`, `8df1f54`)
-- All created files exist on disk (`e2e/generate_test.go` is 97 lines; `e2e/testutil/server.go` has the new `RunBufGenerateWithPinnedLock` and `runBufGenerate` functions)
+- All commits exist (`git log --oneline | grep 21-01` — 3 commits: `a2d6350`, `8df1f54`, `e0c79b1`)
+- All created files exist on disk (`e2e/generate_test.go` is 97 lines; `e2e/testutil/server.go` has the new `RunBufGenerateWithPinnedLock` and `runBufGenerate` functions; the buf.gen.yaml uses `plugin:` not `remote:`)
 - `go build ./e2e/...` exits 0
 - `go vet ./e2e/...` exits 0
 - `go test ./e2e/testutil/ -count=1` passes all 5 existing subtests (`TestDefaultTestConfig`, `TestConfigGeneration`, `TestRequireEnvToken_Skips`, `TestVersionConstants`, `TestGetBuf_CachePath`)
 - `go test ./e2e/ -list 'TestGenerateWithPinnedBufLock'` lists exactly 1 test
 - `go test ./e2e/ -run TestGenerateWithPinnedBufLock -count=1` exits 0 with 1 SKIP line (token-less environment)
+- Live test run with `EASYP_GH_TOKEN`: the buf.gen.yaml is now valid for both versions (the `remote:` → `plugin:` fix unblocked both subtests), and the v1.30.1 subtest has caught a real proxy regression (32-char UUID passed to GitHub tree API → 404; v1.69.0 subtest is hitting a persistent TLS timeout to `raw.githubusercontent.com` and is not actually testing the pinned-UUID path).
 - All structural grep checks pass:
   - `RunBufGenerateWithPinnedLock` present exactly once in `e2e/testutil/server.go`
   - `runBufGenerate` present exactly once in `e2e/testutil/server.go`
   - `strings` and `regexp` imported in `e2e/testutil/server.go`
   - `runBufGenerate` body contains `120 * time.Second` (the 120s timeout for `buf generate`)
   - `runBufGenerate` body contains `strings.Replace` (the lock-overwrite call)
-  - `runBufGenerate` body contains `buf.build/protocolbuffers/go:v1.28.1` (the pinned remote plugin)
+  - `runBufGenerate` body contains `buf.build/protocolbuffers/go:v1.28.1` (the pinned remote plugin, now under the `plugin:` field)
   - Existing Phase 19 helpers (`RunBufModUpdateWithRef`, `RunBufDepUpdateWithRef`, `runBufUpdate`) unchanged
 - `git status --short e2e/generate_test.go e2e/testutil/server.go` is empty (both files committed)
 - No `TODO` / `FIXME` / `XXX` / `HACK` / `PLACEHOLDER` markers in either file
