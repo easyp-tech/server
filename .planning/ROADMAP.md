@@ -230,13 +230,13 @@ Plans:
 
 ### Phase 22: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Wire the v1alpha1 `DownloadManifestAndBlobs` handler on `*api` to the existing Phase 18 UUID-resolution machinery on `*commitServiceHandler` (commitMap → resolveForeignCommitID → probeCommitID via commitUUIDInverse), so that a 32-char buf-issued UUID carried in the request reference is resolved to its 40-char git SHA BEFORE being passed to `GetFiles`/`GetTree`; then re-run the Phase 21 `TestGenerateWithPinnedBufLock/v1.30.1` e2e regression gate to confirm the v1 protocol works end-to-end.
+**Requirements**: PR-22-1, PR-22-2, PR-22-3, PR-22-4, PR-22-5 (derived from RESEARCH.md Test Map; see 22-01-PLAN.md)
 **Depends on:** Phase 21
-**Plans:** 0 plans
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 22 to break down)
+- [ ] [22-01](./phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/22-01-PLAN.md) — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution (CommitResolver interface + resolveCommitForRead wrapper + isUUID branch in blobs.go) with TDD unit cover for PR-22-1/2/3 and the Phase 21 e2e gate for PR-22-4
 
 ---
 
