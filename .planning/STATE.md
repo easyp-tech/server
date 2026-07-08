@@ -98,6 +98,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-07T19:09:00Z
-Stopped at: Phase 19 shipped (1/1 plan, 2 tasks, 3 SCs for e2e tests; tests revealed 2 real proxy regressions → Phase 20 added)
-Resume file: `.planning/phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/19-01-SUMMARY.md`
+Last session: 2026-07-08T10:47:11Z
+Stopped at: Phase 21 executed (5 commits: tasks 1-2 + initial summary + buf.gen.yaml fix + live-test findings update). Status: verifying. Live test with EASYP_GH_TOKEN caught a real proxy regression in v1.30.1 v1alpha1 read-path (UUID passed to GitHub tree API without commitUUIDInverse). Proposed follow-up Phase 22 to fix the v1alpha1 Download chain. Phase 22 not yet added to ROADMAP.
+Resume file: `.planning/phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-/21-01-SUMMARY.md`
