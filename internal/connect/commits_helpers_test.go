@@ -411,6 +411,37 @@ func TestParseResourceRefName_NoRef(t *testing.T) {
 	}
 }
 
+// TestParseResourceRefName_LabelNameIsField3 is the regression guard for
+// the v1.30.1 case caught by Phase 19. Older buf CLIs (v1.30.1) send
+// label_name="main" (the default label name) at proto field 3 with no
+// `ref` at field 4. The pre-fix production code misread label_name as
+// ref, then called GetMeta("main") and hit a GitHub 422 on
+// repos.GetCommit("main"). After the field-4 fix, the label_name at
+// field 3 is silently ignored and `ref` parses to empty, taking the
+// HEAD fast path in the providers. This test pins the contract: field 3
+// is label_name, field 4 is ref, and the parser must read the latter.
+func TestParseResourceRefName_LabelNameIsField3(t *testing.T) {
+	// Build a Name { owner=1, module=2, label_name=3 (value="main") }
+	// message. Do NOT write a field 4 — the test is specifically about
+	// a Name with only label_name set, which is the v1.30.1 no-ref
+	// case.
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp")
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp-net-listeners")
+	name = protowire.AppendTag(name, 3, protowire.BytesType)
+	name = protowire.AppendString(name, "main")
+
+	ref := parseResourceRefName(name)
+	if ref == nil {
+		t.Fatal("parseResourceRefName returned nil for a valid Name with owner+module+label_name")
+	}
+	if ref.owner != "cyp" || ref.module != "cyp-net-listeners" || ref.ref != "" {
+		t.Fatalf("parseResourceRefName = %+v, want {owner:cyp module:cyp-net-listeners ref:}", *ref)
+	}
+}
+
 // TestCommitUUIDInverse locks in the inverse of commitUUID: given a
 // 32-char dashless UUID, recover the first 28 hex characters of the
 // git SHA that produced it. The recovery is lossy by design —
