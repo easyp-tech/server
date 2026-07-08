@@ -202,17 +202,17 @@ func (a *api) DownloadManifestAndBlobs(
 
 **Note on `[ASSUMED]` tagging:** Phase 21's live-test log is the authoritative source for A1 (it explicitly identifies `DownloadManifestAndBlobs` as the failing handler and the UUID as the incoming reference). The claim is tagged `[ASSUMED]` only because the RPC trace was not re-captured in this session, not because Phase 21's evidence is weak.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the fix also cover the `reference == ""` and `reference == "main"` cases on this handler?**
+1. **Should the fix also cover the `reference == ""` and `reference == "main"` cases on this handler?** — RESOLVED: keep narrowly scoped to `isUUID(reference)`; `reference == "main"` deferred to a separate follow-up (proposed Phase 23). Implemented in 22-01-PLAN.md Task 2 Step 5 (forbids the `reference == "main"` branch).
    - What we know: `GetModulePins` (modulepins.go) already handles those for the v1alpha1 path. `DownloadManifestAndBlobs` receiving `"main"` would also fail at `GetTree`, but Phase 21 only surfaced the UUID case.
    - Recommendation: Keep the fix narrowly scoped to `isUUID(reference)`. A `reference == "main"` branch would conflate concerns; if it is a real path, surface it as a separate follow-up (proposed Phase 23).
 
-2. **Should `resolveCommitForRead` be a new public-ish method, or should the planner refactor `ServeDownload`'s decision ladder into a shared helper first?**
+2. **Should `resolveCommitForRead` be a new public-ish method, or should the planner refactor `ServeDownload`'s decision ladder into a shared helper first?** — RESOLVED: do NOT refactor `ServeDownload` this phase; add a small `resolveCommitForRead` helper mirroring the three-step ladder, return `(sha, error)`. Implemented in 22-01-PLAN.md Task 2 Step 5 (forbids ServeDownload refactor) + Step 3 (adds the thin wrapper).
    - What we know: `ServeDownload` (commits.go:~500-590) currently inlines the `commitMap` → `resolveForeignCommitID` → `probeCommitID` ladder.
    - Recommendation: Do NOT refactor `ServeDownload` in this phase (out of scope, higher blast radius). Instead, add a small `resolveCommitForRead` helper that runs the same three steps and returns `(sha, error)`. A future phase can DRY up `ServeDownload` to call the same helper.
 
-3. **Unit test injection: does the new `*api` back-pointer need a nil-safe path for `testMux`?**
+3. **Unit test injection: does the new `*api` back-pointer need a nil-safe path for `testMux`?** — RESOLVED: include the nil guard (`a.commitResolver != nil` branch). Implemented in 22-01-PLAN.md Task 2 Step 4.
    - What we know: `testMux` → `New` → `NewWithConfig` always constructs a `commitServiceHandler`, so the back-pointer is never nil in tests. But a nil-check (`a.resolver != nil`) keeps `blobs.go` robust if a future caller constructs `*api` without the commit handler.
    - Recommendation: Include the nil guard; it costs one branch and prevents a nil-deref in hypothetical embedded use.
 

@@ -234,8 +234,8 @@ Plans:
 **Requirements**: PR-22-1, PR-22-2, PR-22-3, PR-22-4, PR-22-5 (derived from RESEARCH.md Test Map; see 22-01-PLAN.md)
 **Depends on:** Phase 21
 **Plans:** 1 plan
-
 Plans:
+
 - [ ] [22-01](./phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/22-01-PLAN.md) — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution (CommitResolver interface + resolveCommitForRead wrapper + isUUID branch in blobs.go) with TDD unit cover for PR-22-1/2/3 and the Phase 21 e2e gate for PR-22-4
 
 ---
