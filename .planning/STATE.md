@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
 status: executing
-stopped_at: Phase 19 shipped (1/1 plan, 2 tasks, 3 SCs for e2e tests; tests revealed 2 real proxy regressions → Phase 20 added)
-last_updated: "2026-07-08T07:46:19.024Z"
-last_activity: 2026-07-08 -- Phase 20 planning complete
+stopped_at: Phase 20 plan 20-01 complete (1/1 plan, 4 tasks, field-3/field-4 fix shipped, regression-guard test added); pending verification
+last_updated: "2026-07-08T07:51:00.000Z"
+last_activity: 2026-07-08 -- Phase 20 plan 20-01 executed (parseResourceRefName field-number fix)
 progress:
   total_phases: 10
   completed_phases: 9
-  total_plans: 12
-  completed_plans: 11
-  percent: 90
+  total_plans: 13
+  completed_plans: 12
+  percent: 92
 ---
 
 # Project State
@@ -22,14 +22,14 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
 
-**Current focus:** v1.3 milestone — Phase 19 e2e tests added; Phase 20 added to fix ref-honoring regressions the tests caught
+**Current focus:** v1.3 milestone — Phase 20 fix shipped; verification pending
 
 ## Current Position
 
-Phase: 19 (complete) → 20 (next)
-Plan: 19-01 shipped; 20-01 TBD
-Status: Ready to execute
-Last activity: 2026-07-08 -- Phase 20 planning complete
+Phase: 20 (executed) → verification (next)
+Plan: 20-01 complete; verification TBD
+Status: Plan executed; awaiting /gsd-verify-work 20
+Last activity: 2026-07-08 -- Phase 20 plan 20-01 executed
 
 Progress: [####################] 100%
 
