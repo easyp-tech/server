@@ -228,6 +228,16 @@ Plans:
 
 - [x] [21-01](./phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-/21-01-PLAN.md) — Adopt new e2e drafts (generate_test.go + testutil/server.go additions); 2 tasks: (1) add `RunBufGenerateWithPinnedLock` public wrapper + `runBufGenerate` private helper in testutil/server.go (writes buf.yaml + buf.gen.yaml + dummy.proto, runs `buf mod update`, overwrites the lock's `commit:` line via `strings.Replace(..., 1)`, then runs `buf generate`); (2) add `e2e/generate_test.go` with `TestGenerateWithPinnedBufLock` matrix test, verify it compiles + lists + skips cleanly without `EASYP_GH_TOKEN`, commit both files
 
+### Phase 22: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 21
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 22 to break down)
+
 ---
 
 *Roadmap last updated: 2026-07-08*
