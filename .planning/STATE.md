@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
-status: executing
-last_updated: "2026-07-07T14:17:36.053Z"
-last_activity: 2026-07-07 -- Phase 18 planning complete
+status: "Phase 22 shipped — PR #39"
+last_updated: "2026-07-08T13:36:01.102Z"
+last_activity: 2026-07-08
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 12
+  completed_phases: 11
+  total_plans: 15
+  completed_plans: 15
+  percent: 92
 ---
 
 # Project State
@@ -25,18 +25,18 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 ## Current Position
 
-Phase: 18
-Plan: 18-01 shipped
-Status: Phase 18 plan 01 complete
-Last activity: 2026-07-07 -- Phase 18 plan 01 execution complete (refs, isSHA, prewarm removal, commitUUIDInverse)
+Phase: 22
+Plan: Not started
+Status: Phase 22 shipped — PR #39
+Last activity: 2026-07-08
 
-Progress: [####################] 100%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 5 (this milestone)
+- Total plans completed: 6 (this milestone)
 - Average duration: ~10 min
 - Total execution time: ~50 min
 
@@ -47,6 +47,7 @@ Progress: [####################] 100%
 | 16    | 3     | -     | -        |
 | 17    | 1     | -     | 8 min    |
 | 18    | 1     | -     | 18 min   |
+| 22 | 1 | - | - |
 
 **Recent Trend:**
 
@@ -79,6 +80,13 @@ None yet.
 - Phase 17 added: Fix PR #37 review findings — address pre-merge issues from Phase 16 PR: re-route digest errors through `logHandlerError`/`upstreamError` (not `internalError`), remove `internalError` helper that bypassed `ERR-05`, accept SHA-256 Bitbucket commits (regression at commits_helpers.go:39), move `preResolveForTest` to a `_test.go` file
 - Phase 18 added: respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
 - Phase 18 planned: 1 plan (18-01-PLAN.md) with 3 tasks — (1) honor `Name.ref` end-to-end + add `isSHA`/`isUUID`/`commitUUIDInverse` helpers + provider ref-resolution; (2) add `commitUUIDInverse` + table-driven tests; (3) delete `prewarmHeads`/`registerResolved`/`PrewarmConfig` and rewrite `probeCommitID` to use the inverse for 32-char UUID inputs. See `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-{RESEARCH,01-PLAN,VALIDATION}.md`
+- Phase 19 added: e2e tests for the `ref` specified for dependency — `looks like it does not work`. Phase 18 introduced end-to-end honoring of `Name.ref` in `buf.yaml` dependencies (plus `commitUUIDInverse` for 32-char UUID inputs); need a real-server e2e test that exercises the path where the `ref` resolves through buf cache/git to prove it works (or surfaces the bug). See `e2e/ref_test.go` and `.planning/phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/`.
+- Phase 19 executed: e2e tests committed in `e15927b feat(19-01): add e2e tests for ref-honoring in buf.yaml deps`. Tests pass token-less (skip cleanly). With `EASYP_GH_TOKEN` set, tests revealed 2 real proxy regressions: (a) v1.30.1 no-ref path tries to resolve `"main"` as a ref → GitHub 422 (also breaks the pre-existing `TestSmokeBufModUpdate`); (b) v1.69.0 ref-pinned run returns HEAD's SHA instead of the ref's SHA on both `buf mod update` and `buf dep update`. The e2e tests successfully caught the regression; the proxy fixes are deferred to Phase 20.
+- Phase 20 added: Fix ref-honoring regressions discovered in Phase 19 — restore the no-ref (HEAD) path for buf v1.30.1 and fix the v1beta1 path where the ref is being ignored on `buf dep update`. See `.planning/phases/20-fix-the-problem-with-refs-discovered-on-phase-19/`.
+- Phase 21 added: e2e test for `buf generate` with `buf.lock` pointing to a valid-but-not-latest commit. This is a valid situation (the lock is intentionally pinned to an older commit) and should work with both v1 and v2 buf CLIs. See `.planning/phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-`.
+- Phase 21 executed: `TestGenerateWithPinnedBufLock` committed in `8df1f54 test(21-01): add TestGenerateWithPinnedBufLock matrix test`. With `EASYP_GH_TOKEN` set, the test caught two issues: (a) a deprecated `remote:` field in the plan's buf.gen.yaml — fixed in `e0c79b1 fix(21-01): use 'plugin:' not 'remote:' in generated buf.gen.yaml` (the alpha-remote-generation API was removed in v1.69.0+ and is deprecated in v1.30.1); (b) a real proxy regression in the v1.30.1 v1alpha1 `DownloadManifestAndBlobs` read-path: the proxy passes 32-char buf UUIDs directly to GitHub's `/git/trees/<id>` API which 404s, because the v1alpha1 `Download` chain does not apply `commitUUIDInverse` (only the v1beta1 path from Phase 18 does). The v1.69.0 subtest hits a persistent TLS handshake timeout fetching HEAD's tree from `raw.githubusercontent.com` (and is not actually testing the pinned-UUID path — the v1.69.0 client ignores the `buf.lock` for `buf generate` and just asks the proxy for HEAD). The v1.30.1 fix is deferred to a follow-up phase (proposed `22-fix-v1alpha1-download-uuid-handling`); the v1.69.0 subtest redesign is deferred to another follow-up.
+- Phase 22 proposed: Fix the v1.30.1 v1alpha1 read-path to apply `commitUUIDInverse` on 32-char buf-issued UUIDs in the `DownloadManifestAndBlobs` handler chain, then re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass. This is the same class of bug Phase 18 fixed for the v1beta1 path; Phase 19/20 e2e tests only exercised the v1beta1 path.
+- Phase 22 added: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works. Depends on Phase 21. Scope: (1) apply `commitUUIDInverse` in the v1alpha1 `DownloadManifestAndBlobs` handler chain so 32-char buf UUIDs resolve to git SHAs before hitting GitHub's tree API; (2) re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass; (3) broader verification that the v1 (v1alpha1) protocol path works end-to-end (not just `buf generate` — also `buf mod update` and the existing smoke test that Phase 19 revealed was broken for v1.30.1). See `.planning/phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/`.
 
 ## Deferred Items
 
@@ -92,6 +100,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-07T14:17:36Z
-Stopped at: Phase 18 shipped (1/1 plan, 3 tasks, 5 SCs satisfied, executor self-check PASSED, 18 min)
-Resume file: `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-SUMMARY.md`
+Last session: 2026-07-08T10:47:11Z
+Stopped at: Phase 21 executed (5 commits: tasks 1-2 + initial summary + buf.gen.yaml fix + live-test findings update). Status: verifying. Live test with EASYP_GH_TOKEN caught a real proxy regression in v1.30.1 v1alpha1 read-path (UUID passed to GitHub tree API without commitUUIDInverse). Proposed follow-up Phase 22 to fix the v1alpha1 Download chain. Phase 22 not yet added to ROADMAP.
+Resume file: `.planning/phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-/21-01-SUMMARY.md`

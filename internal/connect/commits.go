@@ -944,6 +944,63 @@ func (h *commitServiceHandler) sweepMisses(ctx context.Context) {
 	}
 }
 
+// resolveCommitForRead is the thin wrapper invoked by the v1alpha1
+// DownloadManifestAndBlobs handler (via the CommitResolver interface on *api)
+// to resolve a buf-issued commit id to the 40-/64-char git SHA the upstream
+// source points at. It mirrors the ServeDownload decision ladder verbatim in
+// shape: (a) commitMap lookup, (b) single-module foreign-id fallback, (c)
+// probe fan-out. The probe step is where 32-char UUID inputs are handled via
+// commitUUIDInverse + prefix-match — this wrapper does NOT call those helpers
+// directly (RESEARCH.md "Don't Hand-Roll" table); probeCommitID owns them.
+//
+// On a total miss the method returns a wrapped error so the caller surfaces a
+// Connect error and never falls back to HEAD (RESEARCH.md anti-pattern
+// "Returning HEAD when resolution fails"). Callers must NOT hold commitMu
+// when calling this method; the method acquires/releases the lock internally
+// and probeCommitID mandates a lock-free caller.
+func (h *commitServiceHandler) resolveCommitForRead(
+	ctx context.Context, owner, module, id string,
+) (string, error) {
+	// (a) commitMap — the in-session cache populated by GetCommits.
+	h.commitMu.RLock()
+	if ref, ok := h.commitMap[id]; ok {
+		info := h.infoCache[ref.owner+"/"+ref.module]
+		h.commitMu.RUnlock()
+		if info.commit != "" {
+			return info.commit, nil
+		}
+	} else {
+		h.commitMu.RUnlock()
+	}
+
+	// (b) single-module foreign-id fallback (commitMap miss).
+	if ref := h.resolveForeignCommitID(id); ref != nil {
+		h.commitMu.RLock()
+		info := h.infoCache[ref.owner+"/"+ref.module]
+		h.commitMu.RUnlock()
+		if info.commit != "" {
+			return info.commit, nil
+		}
+	}
+
+	// (c) probe fan-out — handles UUID inputs via commitUUIDInverse inside
+	// probeCommitID. Caller must NOT hold commitMu (satisfied: all locks
+	// above were released).
+	if h.probeEnabled {
+		if ref, ok := h.probeCommitID(ctx, id); ok && ref != nil {
+			h.commitMu.RLock()
+			info := h.infoCache[ref.owner+"/"+ref.module]
+			h.commitMu.RUnlock()
+			if info.commit != "" {
+				return info.commit, nil
+			}
+		}
+	}
+
+	// (d) All three steps missed. Surface an error — do NOT fall back to HEAD.
+	return "", fmt.Errorf("commit id %q not resolved by any configured source", id)
+}
+
 // probeCommitID resolves a Download commit_id (= git sha) that was neither
 // minted in-session nor recoverable by the single-module fallback, by asking
 // each configured source whether it owns the sha. A git sha is unique to one

@@ -41,6 +41,9 @@
 - [ ] **Phase 15: Operational Logging** — Panic recovery middleware with full stack trace
 - [x] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log (completed 2026-07-06)
 - [x] **Phase 17: Fix PR #37 review findings** — Address pre-merge review findings from PR #37 (Phase 16) so the commit-id format cutover lands without undoing the v1.3 logging-quality work or breaking Bitbucket SHA-256 repositories (completed 2026-07-07)
+- [x] **Phase 18: Respect buf.yaml dependency refs** — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe (completed 2026-07-07)
+- [x] **Phase 19: e2e tests for ref-honoring in buf.yaml deps** — Three `TestRefRespected_*` tests that exercise the proxy's ref-honoring behavior end-to-end via a real buf CLI + real GitHub API; tests pass with `EASYP_GH_TOKEN` set, skip cleanly otherwise (completed 2026-07-07)
+- [ ] **Phase 20: Fix ref-honoring regressions discovered in Phase 19** — Restore the no-ref (HEAD) path that Phase 18 broke for buf v1.30.1, and fix the v1beta1 path where the ref is being ignored on `buf dep update`
 
 ## Phase Details
 
@@ -190,6 +193,51 @@ Plans:
 
 - [x] [18-01](./phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-PLAN.md) — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe
 
+### Phase 19: we need e2e tests for the ref specified for dependency - looks like it does not work
+
+**Goal:** End-to-end proof that the proxy honors the `ref` field in a `buf.yaml` dependency: a `buf mod update` (and `buf dep update` on v1.32+) run with a `name:ref` dep in buf.yaml must produce a `buf.lock` whose `commit:` line is the UUID derived from the SHA at that ref, not from HEAD. Phase 18 (commit 4fc6f28) shipped the ref-honoring code path (`parseResourceRefName` reads proto field 3, `ServeHTTP`/`ServeGraph` pass `ref.ref` to providers, providers gate on `isSHA(commit)` and route refs through their commit-fetch APIs). This phase adds the missing real-server e2e tests that exercise the integration with a real buf CLI + real GitHub API.
+**Depends on:** Phase 18
+**Requirements**: SC-19-1, SC-19-2, SC-19-3 (all derived from this plan; see 19-01-PLAN.md)
+**Success Criteria** (what must be TRUE):
+
+  1. For every cached buf binary in `testdata/buf/`, `buf mod update` against the proxy with a `name:ref` dep in buf.yaml pins `buf.lock` to a different commit than the no-ref run; a regression where the proxy returns HEAD for the ref-pinned run fails the test with both lock files shown side-by-side (`TestRefRespected_ModUpdate_DiffersFromHead`)
+  2. For v1.69.0, `buf mod update` with the pinned googleapis tag (`common-protos-1_3_1`) pins `buf.lock` to the UUID derived from the SHA at that tag — the SHA is fetched via `git ls-remote https://github.com/googleapis/googleapis refs/tags/common-protos-1_3_1` and the UUID is computed via the same `commitUUID` byte table the proxy uses (`TestRefRespected_ModUpdate_MatchesUpstreamSHA`)
+  3. For v1.69.0, `buf dep update` with the pinned ref pins `buf.lock` to a different commit than the no-ref run; the modern subcommand exercises the same ref-honoring path the deprecated `buf mod update` does, on the v1beta1 protocol (`TestRefRespected_DepUpdate_DiffersFromHead`)
+
+**Plans:** 1 planPlans:
+
+- [ ] [19-01](./phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/19-01-PLAN.md) — Adopt in-progress e2e drafts (ref_test.go + testutil/server.go additions); 2 tasks: (1) finalize testutil additions and verify testutil unit tests still pass; (2) finalize e2e tests, verify they compile + list + skip cleanly without EASYP_GH_TOKEN, and commit both files
+
+### Phase 20: fix the problem with refs discovered on phase 19
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 19
+**Plans:** 0 plans
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 20 to break down)
+
+### Phase 21: we need another e2e test: we are doing buf generate with buf.lock pointing to the valid bt not the latest commit. This is valid situation and should work with v1 and v2
+
+**Goal:** Add a single e2e test (`TestGenerateWithPinnedBufLock`) that proves the proxy can serve a `buf generate` request when `buf.lock` pins a valid (but non-HEAD) commit. The test runs for every cached buf version (v1.30.1 v1alpha1 + v1.69.0 v1beta1), derives the pinned UUID from a real googleapis tag via `git ls-remote` + the test-side `commitUUIDForTest` byte-table mirror, overwrites `buf.lock`'s `commit:` line with the pinned UUID, and asserts `buf generate` exits 0 + generates at least one non-empty `gen/go/google/type/*.pb.go` file whose content contains `package google.type`. This is the regression guard for the Phase 18/20 read-path (infoCache writeback + post-restart `probeCommitID`): a future regression that 400s the proxy on a pre-existing UUID or serves wrong content is caught at CI time.
+**Requirements**: SC-21-1, SC-21-2 (derived from this plan; see 21-01-PLAN.md)
+**Depends on:** Phase 20
+**Plans:** 1/1 plans complete
+Plans:
+
+- [x] [21-01](./phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-/21-01-PLAN.md) — Adopt new e2e drafts (generate_test.go + testutil/server.go additions); 2 tasks: (1) add `RunBufGenerateWithPinnedLock` public wrapper + `runBufGenerate` private helper in testutil/server.go (writes buf.yaml + buf.gen.yaml + dummy.proto, runs `buf mod update`, overwrites the lock's `commit:` line via `strings.Replace(..., 1)`, then runs `buf generate`); (2) add `e2e/generate_test.go` with `TestGenerateWithPinnedBufLock` matrix test, verify it compiles + lists + skips cleanly without `EASYP_GH_TOKEN`, commit both files
+
+### Phase 22: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works
+
+**Goal:** Wire the v1alpha1 `DownloadManifestAndBlobs` handler on `*api` to the existing Phase 18 UUID-resolution machinery on `*commitServiceHandler` (commitMap → resolveForeignCommitID → probeCommitID via commitUUIDInverse), so that a 32-char buf-issued UUID carried in the request reference is resolved to its 40-char git SHA BEFORE being passed to `GetFiles`/`GetTree`; then re-run the Phase 21 `TestGenerateWithPinnedBufLock/v1.30.1` e2e regression gate to confirm the v1 protocol works end-to-end.
+**Requirements**: PR-22-1, PR-22-2, PR-22-3, PR-22-4, PR-22-5 (derived from RESEARCH.md Test Map; see 22-01-PLAN.md)
+**Depends on:** Phase 21
+**Plans:** 1/1 plans complete
+Plans:
+
+- [ ] [22-01](./phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/22-01-PLAN.md) — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution (CommitResolver interface + resolveCommitForRead wrapper + isUUID branch in blobs.go) with TDD unit cover for PR-22-1/2/3 and the Phase 21 e2e gate for PR-22-4
+
 ---
 
-*Roadmap last updated: 2026-07-07*
+*Roadmap last updated: 2026-07-08*

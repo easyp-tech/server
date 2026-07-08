@@ -365,18 +365,21 @@ func TestIsUUID(t *testing.T) {
 }
 
 // TestParseResourceRefName_ReadsRef verifies that parseResourceRefName
-// captures the ref field (proto field 3) of the buf BSR Name message.
+// captures the ref field (proto field 4) of the buf BSR Name message.
 // The buf CLI sends a `ref` to disambiguate which branch/tag the client
 // wants; the proxy must return the SHA at that ref, not HEAD. Without
-// the field-3 arm, ref inputs would be silently dropped.
+// the field-4 arm, ref inputs would be silently dropped.
 func TestParseResourceRefName_ReadsRef(t *testing.T) {
-	// Build a Name { owner=1, module=2, ref=3 } message.
+	// Build a Name { owner=1, module=2, ref=4 } message. The buf
+	// `Name.child` oneof defines label_name=3 and ref=4 (see
+	// api/proto/buf/registry/module/v1beta1/resource.proto); this test
+	// pins the field-4 arm of parseResourceRefName.
 	var name []byte
 	name = protowire.AppendTag(name, 1, protowire.BytesType)
 	name = protowire.AppendString(name, "cyp")
 	name = protowire.AppendTag(name, 2, protowire.BytesType)
 	name = protowire.AppendString(name, "cyp-net-listeners")
-	name = protowire.AppendTag(name, 3, protowire.BytesType)
+	name = protowire.AppendTag(name, 4, protowire.BytesType)
 	name = protowire.AppendString(name, "main/v2")
 
 	ref := parseResourceRefName(name)
@@ -402,6 +405,37 @@ func TestParseResourceRefName_NoRef(t *testing.T) {
 	ref := parseResourceRefName(name)
 	if ref == nil {
 		t.Fatal("parseResourceRefName returned nil for a valid Name with owner+module (no ref)")
+	}
+	if ref.owner != "cyp" || ref.module != "cyp-net-listeners" || ref.ref != "" {
+		t.Fatalf("parseResourceRefName = %+v, want {owner:cyp module:cyp-net-listeners ref:}", *ref)
+	}
+}
+
+// TestParseResourceRefName_LabelNameIsField3 is the regression guard for
+// the v1.30.1 case caught by Phase 19. Older buf CLIs (v1.30.1) send
+// label_name="main" (the default label name) at proto field 3 with no
+// `ref` at field 4. The pre-fix production code misread label_name as
+// ref, then called GetMeta("main") and hit a GitHub 422 on
+// repos.GetCommit("main"). After the field-4 fix, the label_name at
+// field 3 is silently ignored and `ref` parses to empty, taking the
+// HEAD fast path in the providers. This test pins the contract: field 3
+// is label_name, field 4 is ref, and the parser must read the latter.
+func TestParseResourceRefName_LabelNameIsField3(t *testing.T) {
+	// Build a Name { owner=1, module=2, label_name=3 (value="main") }
+	// message. Do NOT write a field 4 — the test is specifically about
+	// a Name with only label_name set, which is the v1.30.1 no-ref
+	// case.
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp")
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, "cyp-net-listeners")
+	name = protowire.AppendTag(name, 3, protowire.BytesType)
+	name = protowire.AppendString(name, "main")
+
+	ref := parseResourceRefName(name)
+	if ref == nil {
+		t.Fatal("parseResourceRefName returned nil for a valid Name with owner+module+label_name")
 	}
 	if ref.owner != "cyp" || ref.module != "cyp-net-listeners" || ref.ref != "" {
 		t.Fatalf("parseResourceRefName = %+v, want {owner:cyp module:cyp-net-listeners ref:}", *ref)

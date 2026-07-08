@@ -28,14 +28,45 @@ func isSHA(s string) bool {
 	return true
 }
 
+// isConventionalDefaultName reports whether s is a well-known default
+// branch or label name. Used by the GetMeta carve-out to handle the
+// v1.30.1 v1alpha1 case where the buf CLI sends the buf default label
+// name as the reference, even when it doesn't match the repo's actual
+// default branch name (e.g., googleapis/googleapis has default branch
+// "master" but the buf default label is "main", so the v1.30.1 client
+// sends reference="main" via modulepins.go:46). The set covers the
+// conventional default names in use across the git ecosystem since
+// ~2010: "main" (modern), "master" (legacy), "develop" (git-flow),
+// "trunk" (subversion-style). Returning HEAD for any of these is a
+// reasonable heuristic for the v1.30.1 case (the client wants the
+// default label's HEAD; the proxy doesn't have label resolution, so
+// the default branch's HEAD is the best approximation). The risk —
+// a repo with a non-conventional default (e.g., "production") and a
+// branch named "main" — returns HEAD instead of the branch's commit,
+// but this is the pre-Phase-18 behavior and the v1.30.1 case is the
+// common one.
+func isConventionalDefaultName(s string) bool {
+	switch s {
+	case "main", "master", "develop", "trunk":
+		return true
+	}
+	return false
+}
+
 func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (content.Meta, error) {
 	meta, err := c.getRepo(ctx, owner, repoName)
 	if err != nil {
 		return meta, fmt.Errorf("investigating %q/%q: %w", owner, repoName, err)
 	}
 
-	// Three branches:
+	// Four branches:
 	//   - commit == "":        no ref was supplied; keep HEAD from getRepo.
+	//   - commit == DefaultBranch || isConventionalDefaultName(commit):
+	//                          client asked for a well-known default-
+	//                          branch/label name (the v1.30.1 v1alpha1
+	//                          case: client sends reference="main" even
+	//                          when the repo's default is "master");
+	//                          keep HEAD from getRepo, no repos.GetCommit.
 	//   - isSHA(commit):       raw SHA fast path (40/64 lowercase hex).
 	//   - non-SHA non-empty:   treat as a ref and resolve via GitHub's
 	//                          repos.GetCommit (accepts ref names, short
@@ -46,7 +77,20 @@ func (c client) GetMeta(ctx context.Context, owner, repoName, commit string) (co
 	//                          and broke 40/64-char SHAs that weren't at
 	//                          HEAD.
 	if commit != "" {
-		if isSHA(commit) {
+		if commit == meta.DefaultBranch || isConventionalDefaultName(commit) {
+			// Client asked for the default branch (or a well-known
+			// default-name like "main" / "master" / "develop" /
+			// "trunk") by name. meta.Commit already holds the default
+			// branch's HEAD SHA (set by getRepo via repos.GetBranch),
+			// so we can return without a second round-trip. Without
+			// this carve-out, repos.GetCommit(ctx, owner, repoName,
+			// "main", nil) hits GitHub's /commits/main endpoint, which
+			// expects a SHA and rejects branch names with 422 "No
+			// commit found for SHA: main" (this is the v1.30.1
+			// v1alpha1 path: the client sends reference="main" via
+			// modulepins.go:46, even when the repo's default branch
+			// is "master").
+		} else if isSHA(commit) {
 			meta.Commit = commit
 		} else {
 			rc, _, err := c.repos.GetCommit(ctx, owner, repoName, commit, nil)
