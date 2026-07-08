@@ -41,6 +41,9 @@
 - [ ] **Phase 15: Operational Logging** — Panic recovery middleware with full stack trace
 - [x] **Phase 16: Commit ID Resolution Improvements** — Use first 16 bytes of git SHA as commit id (incl. short-sha support), probe all configured repos on cache miss, clearer not-found error response and log (completed 2026-07-06)
 - [x] **Phase 17: Fix PR #37 review findings** — Address pre-merge review findings from PR #37 (Phase 16) so the commit-id format cutover lands without undoing the v1.3 logging-quality work or breaking Bitbucket SHA-256 repositories (completed 2026-07-07)
+- [x] **Phase 18: Respect buf.yaml dependency refs** — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe (completed 2026-07-07)
+- [x] **Phase 19: e2e tests for ref-honoring in buf.yaml deps** — Three `TestRefRespected_*` tests that exercise the proxy's ref-honoring behavior end-to-end via a real buf CLI + real GitHub API; tests pass with `EASYP_GH_TOKEN` set, skip cleanly otherwise (completed 2026-07-07)
+- [ ] **Phase 20: Fix ref-honoring regressions discovered in Phase 19** — Restore the no-ref (HEAD) path that Phase 18 broke for buf v1.30.1, and fix the v1beta1 path where the ref is being ignored on `buf dep update`
 
 ## Phase Details
 
@@ -204,6 +207,16 @@ Plans:
 **Plans:** 1 planPlans:
 
 - [ ] [19-01](./phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/19-01-PLAN.md) — Adopt in-progress e2e drafts (ref_test.go + testutil/server.go additions); 2 tasks: (1) finalize testutil additions and verify testutil unit tests still pass; (2) finalize e2e tests, verify they compile + list + skip cleanly without EASYP_GH_TOKEN, and commit both files
+
+### Phase 20: fix the problem with refs discovered on phase 19
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 19
+**Plans:** 0 plans
+Plans:
+
+- [ ] TBD (run /gsd-plan-phase 20 to break down)
 
 ---
 

@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
 status: executing
-stopped_at: Phase 18 shipped (1/1 plan, 3 tasks, 5 SCs satisfied, executor self-check PASSED, 18 min)
-last_updated: "2026-07-07T15:58:02.521Z"
-last_activity: 2026-07-07 -- Phase 19 planning complete
+stopped_at: Phase 19 shipped (1/1 plan, 2 tasks, 3 SCs for e2e tests; tests revealed 2 real proxy regressions → Phase 20 added)
+last_updated: "2026-07-08T07:46:19.024Z"
+last_activity: 2026-07-08 -- Phase 20 planning complete
 progress:
-  total_phases: 9
-  completed_phases: 8
-  total_plans: 11
-  completed_plans: 10
-  percent: 89
+  total_phases: 10
+  completed_phases: 9
+  total_plans: 12
+  completed_plans: 11
+  percent: 90
 ---
 
 # Project State
@@ -22,14 +22,14 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
 
-**Current focus:** Milestone complete
+**Current focus:** v1.3 milestone — Phase 19 e2e tests added; Phase 20 added to fix ref-honoring regressions the tests caught
 
 ## Current Position
 
-Phase: 18
-Plan: 18-01 shipped
+Phase: 19 (complete) → 20 (next)
+Plan: 19-01 shipped; 20-01 TBD
 Status: Ready to execute
-Last activity: 2026-07-07 -- Phase 19 planning complete
+Last activity: 2026-07-08 -- Phase 20 planning complete
 
 Progress: [####################] 100%
 
@@ -81,6 +81,8 @@ None yet.
 - Phase 18 added: respect buf.yaml dependency refs (not always HEAD); fix related bug; remove prewarm logic now that buf id → git id is derivable
 - Phase 18 planned: 1 plan (18-01-PLAN.md) with 3 tasks — (1) honor `Name.ref` end-to-end + add `isSHA`/`isUUID`/`commitUUIDInverse` helpers + provider ref-resolution; (2) add `commitUUIDInverse` + table-driven tests; (3) delete `prewarmHeads`/`registerResolved`/`PrewarmConfig` and rewrite `probeCommitID` to use the inverse for 32-char UUID inputs. See `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-{RESEARCH,01-PLAN,VALIDATION}.md`
 - Phase 19 added: e2e tests for the `ref` specified for dependency — `looks like it does not work`. Phase 18 introduced end-to-end honoring of `Name.ref` in `buf.yaml` dependencies (plus `commitUUIDInverse` for 32-char UUID inputs); need a real-server e2e test that exercises the path where the `ref` resolves through buf cache/git to prove it works (or surfaces the bug). See `e2e/ref_test.go` and `.planning/phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/`.
+- Phase 19 executed: e2e tests committed in `e15927b feat(19-01): add e2e tests for ref-honoring in buf.yaml deps`. Tests pass token-less (skip cleanly). With `EASYP_GH_TOKEN` set, tests revealed 2 real proxy regressions: (a) v1.30.1 no-ref path tries to resolve `"main"` as a ref → GitHub 422 (also breaks the pre-existing `TestSmokeBufModUpdate`); (b) v1.69.0 ref-pinned run returns HEAD's SHA instead of the ref's SHA on both `buf mod update` and `buf dep update`. The e2e tests successfully caught the regression; the proxy fixes are deferred to Phase 20.
+- Phase 20 added: Fix ref-honoring regressions discovered in Phase 19 — restore the no-ref (HEAD) path for buf v1.30.1 and fix the v1beta1 path where the ref is being ignored on `buf dep update`. See `.planning/phases/20-fix-the-problem-with-refs-discovered-on-phase-19/`.
 
 ## Deferred Items
 
@@ -94,6 +96,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-07T14:17:36Z
-Stopped at: Phase 18 shipped (1/1 plan, 3 tasks, 5 SCs satisfied, executor self-check PASSED, 18 min)
-Resume file: `.planning/phases/18-respect-buf-yaml-dependency-refs-not-always-head-fix-related/18-01-SUMMARY.md`
+Last session: 2026-07-07T19:09:00Z
+Stopped at: Phase 19 shipped (1/1 plan, 2 tasks, 3 SCs for e2e tests; tests revealed 2 real proxy regressions → Phase 20 added)
+Resume file: `.planning/phases/19-we-need-e2e-tests-for-the-ref-specified-for-dependency-looks/19-01-SUMMARY.md`
