@@ -31,8 +31,11 @@ func (c client) getMeta(ctx context.Context, commit string) (content.Meta, error
 		return meta, fmt.Errorf("investigating: %w", err)
 	}
 
-	// Three branches:
+	// Four branches:
 	//   - commit == "":        no ref was supplied; keep HEAD from getRepo.
+	//   - commit == DefaultBranch: client asked for the default branch by
+	//                          name (the v1.30.1 v1alpha1 case); keep
+	//                          HEAD from getRepo, no /commits/ call.
 	//   - isSHA(commit):       raw SHA fast path (40/64 lowercase hex).
 	//   - non-SHA non-empty:   treat as a ref and resolve via the
 	//                          provider's commit-fetch API. The previous
@@ -41,7 +44,16 @@ func (c client) getMeta(ctx context.Context, commit string) (content.Meta, error
 	//                          which both ignored refs and broke
 	//                          40/64-char SHAs that weren't at HEAD.
 	if commit != "" {
-		if isSHA(commit) {
+		if commit == meta.DefaultBranch {
+			// Client asked for the default branch by name. meta.Commit
+			// already holds its HEAD SHA (set by getRepo from
+			// repo.LatestCommit), so we can return without a second
+			// round-trip. Without this carve-out, c.getCommit(ctx,
+			// "main") hits Bitbucket's /commits/main endpoint, which
+			// expects a SHA and rejects branch names with 404 (this is
+			// the v1.30.1 v1alpha1 path: the client sends
+			// reference="main" via modulepins.go:46).
+		} else if isSHA(commit) {
 			meta.Commit = commit
 		} else {
 			resolved, err := c.getCommit(ctx, commit)
