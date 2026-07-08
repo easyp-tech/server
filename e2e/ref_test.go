@@ -23,6 +23,18 @@ import (
 //	HEAD              → af2513fa2dc3b1fb9992faaf900807f856d35990
 const pinnedRef = "common-protos-1_3_1"
 
+// branchRef is the branch-name fixture for the branch-ref test. It is a
+// stable, long-lived non-default branch on googleapis/googleapis (whose
+// default branch is "master"). It is NOT in the provider's
+// isConventionalDefaultName set (main/master/develop/trunk), so a dep
+// pinned to ":gh-pages" exercises the repos.GetCommit fall-through in
+// GetMeta (getrepo.go:96) rather than the HEAD carve-out. Its tip differs
+// from master's tip, which the tests assert at runtime.
+//
+//	gh-pages tip (runtime) → branch tip SHA
+//	master     (default)   → master tip SHA
+const branchRef = "gh-pages"
+
 // commitLineRE matches the "commit: <value>" line in either buf.lock
 // format. v1 and v2 use the same field name (just under different
 // parent keys: `remote/owner/repository` vs `name`), so a single regex
@@ -188,6 +200,118 @@ func TestRefRespected_DepUpdate_DiffersFromHead(t *testing.T) {
 	if headCommit == refCommit {
 		t.Fatalf("buf dep update pinned the same commit %q for both HEAD and ref=%s; proxy did not honor Name.ref.\nHEAD lock:\n%s\nRef lock:\n%s",
 			headCommit, pinnedRef, headLock, refLock)
+	}
+}
+
+// TestRefRespected_BranchName_PinsBranchTip proves that a buf.yaml dep
+// whose ":ref" is a branch name (not a tag, not a SHA) pins the resulting
+// buf.lock to that branch's tip SHA — not to HEAD. The fixture is the
+// "gh-pages" branch on googleapis/googleapis, a stable non-default branch
+// (the repo's default is "master") that is NOT in the provider's
+// isConventionalDefaultName set, so it exercises the repos.GetCommit
+// fall-through in GetMeta (getrepo.go:96) rather than the HEAD carve-out.
+//
+// The expected lock commit is derived at runtime: git ls-remote resolves
+// the branch tip, then commitUUIDForTest mints the buf-issued UUID the
+// proxy should stamp. The test also asserts the branch tip differs from
+// master's tip, confirming the fixture is genuinely a non-default branch.
+//
+// Only v1.69.0 is exercised, matching TestRefRespected_ModUpdate_MatchesUpstreamSHA:
+// the strict UUID assertion is sensitive to the commitUUID byte table and
+// is intended as a regression guard for the current minting contract.
+func TestRefRespected_BranchName_PinsBranchTip(t *testing.T) {
+	token := testutil.RequireEnvToken(t, "EASYP_GH_TOKEN")
+	cfg := testutil.DefaultTestConfig()
+	cfg.GithubToken = token
+
+	bufPath := testutil.GetBuf(t, testutil.BufV169)
+	srv := testutil.StartServer(t, cfg)
+
+	// Resolve the branch tip and the default-branch tip. The branch tip is
+	// the source of truth the proxy is expected to honor; the master tip is
+	// a sanity check that the fixture is genuinely non-default.
+	branchTip := gitLsRemote(t, "https://github.com/googleapis/googleapis", "refs/heads/"+branchRef)
+	if !isLowerHex(branchTip, 40) {
+		t.Fatalf("git ls-remote for branch %q returned %q, expected a 40-char lowercase hex SHA", branchRef, branchTip)
+	}
+	masterTip := gitLsRemote(t, "https://github.com/googleapis/googleapis", "refs/heads/master")
+	if branchTip == masterTip {
+		t.Fatalf("%s tip == master tip %q; fixture is no longer a non-default branch", branchRef, branchTip)
+	}
+
+	// Derive the expected UUID via the same byte table the proxy uses.
+	expectedUUID := commitUUIDForTest(branchTip)
+
+	exitCode, stderr, lock := testutil.RunBufModUpdateWithRef(t, bufPath, srv.Port, branchRef)
+	if exitCode != 0 {
+		t.Fatalf("buf mod update (ref=%s) failed (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
+			branchRef, exitCode, srv.Output.String(), stderr)
+	}
+
+	gotCommit, err := extractCommitFromLock(lock)
+	if err != nil {
+		t.Fatalf("extract commit from lock: %v\nlock:\n%s", err, lock)
+	}
+	if gotCommit != expectedUUID {
+		t.Fatalf("buf.lock commit = %q, want %q (derived from %s branch tip %s).\nbuf.lock:\n%s",
+			gotCommit, expectedUUID, branchRef, branchTip, lock)
+	}
+}
+
+// TestRefRespected_NonDefaultBranchCommitSHA proves that a buf.yaml dep
+// whose ":ref" is a raw 40-char commit SHA — specifically a commit that
+// is NOT on the default branch — pins the resulting buf.lock to that
+// commit. This exercises the isSHA fast path in GetMeta (getrepo.go:93),
+// which stamps the SHA directly regardless of which branch it lives on.
+//
+// The fixture SHA is the tip of the "gh-pages" branch (a non-default
+// branch on googleapis/googleapis), so the commit is provably off the
+// default branch "master". The test asserts the SHA differs from master's
+// tip, then sends the SHA itself as the ref.
+//
+// This test also answers the empirical question "does the buf CLI accept
+// a raw 40-char SHA as the ':ref' suffix?" If buf rejects the syntax
+// client-side, the failure surfaces the captured buf stderr — which is
+// itself the answer to the user's question.
+//
+// Only v1.69.0 is exercised, matching the matches-upstream test.
+func TestRefRespected_NonDefaultBranchCommitSHA(t *testing.T) {
+	token := testutil.RequireEnvToken(t, "EASYP_GH_TOKEN")
+	cfg := testutil.DefaultTestConfig()
+	cfg.GithubToken = token
+
+	bufPath := testutil.GetBuf(t, testutil.BufV169)
+	srv := testutil.StartServer(t, cfg)
+
+	// The fixture SHA is the tip of the gh-pages branch — a commit that
+	// lives on a non-default branch.
+	branchTip := gitLsRemote(t, "https://github.com/googleapis/googleapis", "refs/heads/"+branchRef)
+	if !isLowerHex(branchTip, 40) {
+		t.Fatalf("git ls-remote for branch %q returned %q, expected a 40-char lowercase hex SHA", branchRef, branchTip)
+	}
+	masterTip := gitLsRemote(t, "https://github.com/googleapis/googleapis", "refs/heads/master")
+	if branchTip == masterTip {
+		t.Fatalf("%s tip == master tip %q; fixture commit is no longer off the default branch", branchRef, branchTip)
+	}
+
+	// Derive the expected UUID the proxy should stamp for this SHA.
+	expectedUUID := commitUUIDForTest(branchTip)
+
+	// The ref IS the raw 40-char SHA. The dep string becomes
+	// host:port/owner/repo:<40hex>.
+	exitCode, stderr, lock := testutil.RunBufModUpdateWithRef(t, bufPath, srv.Port, branchTip)
+	if exitCode != 0 {
+		t.Fatalf("buf mod update (ref=<sha %s>) failed (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
+			branchTip, exitCode, srv.Output.String(), stderr)
+	}
+
+	gotCommit, err := extractCommitFromLock(lock)
+	if err != nil {
+		t.Fatalf("extract commit from lock: %v\nlock:\n%s", err, lock)
+	}
+	if gotCommit != expectedUUID {
+		t.Fatalf("buf.lock commit = %q, want %q (derived from non-default-branch commit %s).\nbuf.lock:\n%s",
+			gotCommit, expectedUUID, branchTip, lock)
 	}
 }
 
