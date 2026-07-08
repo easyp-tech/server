@@ -365,18 +365,21 @@ func TestIsUUID(t *testing.T) {
 }
 
 // TestParseResourceRefName_ReadsRef verifies that parseResourceRefName
-// captures the ref field (proto field 3) of the buf BSR Name message.
+// captures the ref field (proto field 4) of the buf BSR Name message.
 // The buf CLI sends a `ref` to disambiguate which branch/tag the client
 // wants; the proxy must return the SHA at that ref, not HEAD. Without
-// the field-3 arm, ref inputs would be silently dropped.
+// the field-4 arm, ref inputs would be silently dropped.
 func TestParseResourceRefName_ReadsRef(t *testing.T) {
-	// Build a Name { owner=1, module=2, ref=3 } message.
+	// Build a Name { owner=1, module=2, ref=4 } message. The buf
+	// `Name.child` oneof defines label_name=3 and ref=4 (see
+	// api/proto/buf/registry/module/v1beta1/resource.proto); this test
+	// pins the field-4 arm of parseResourceRefName.
 	var name []byte
 	name = protowire.AppendTag(name, 1, protowire.BytesType)
 	name = protowire.AppendString(name, "cyp")
 	name = protowire.AppendTag(name, 2, protowire.BytesType)
 	name = protowire.AppendString(name, "cyp-net-listeners")
-	name = protowire.AppendTag(name, 3, protowire.BytesType)
+	name = protowire.AppendTag(name, 4, protowire.BytesType)
 	name = protowire.AppendString(name, "main/v2")
 
 	ref := parseResourceRefName(name)
