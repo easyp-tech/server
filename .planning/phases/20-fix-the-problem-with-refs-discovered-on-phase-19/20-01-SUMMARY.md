@@ -46,7 +46,7 @@ completed: 2026-07-08
 
 # Phase 20: Fix refs regressions discovered on Phase 19 — Summary
 
-**parseResourceRefName now reads Name.ref at proto field 4 (the buf v1beta1/v1 spec), eliminating the two Phase 19 regressions: GitHub 422 on v1.30.1 no-ref requests and HEAD-instead-of-SHA on v1.69.0 ref-pinned requests.**
+**parseResourceRefName now reads Name.ref at proto field 4 (the buf v1beta1/v1 spec), fixing the v1.69.0 ref-pinned → HEAD regression. The v1.30.1 no-ref → 422 regression was NOT fixed by this phase: v1.30.1 actually uses the v1alpha1 path (`v1alpha1.ResolveService/GetModulePins`), not v1beta1 as the Phase 20 research claimed, and sends `reference="main"` directly through the generated proto — a separate, distinct bug from the field-3/field-4 misread.**
 
 ## Performance
 
@@ -86,6 +86,42 @@ _Note: TDD was off (`workflow.tdd_mode=false`); commits follow the fix-then-test
 - One-line production fix at the existing `else if` arm. No helper extraction, no new files, no new dependencies. The existing `parseResourceRef` (lines 159-178) is unchanged — the bug is confined to the `Name` parser.
 - Test/production lockstep moved in the same change set: the ReadsRef test writes field 4, matching the production code that reads field 4. Future drift fails both Task 2's and Task 3's automated verify.
 - A second regression-guard test (`TestParseResourceRefName_LabelNameIsField3`) is added rather than relying solely on the existing tests, because the new test explicitly pins the wire contract that the previous tests did not assert: "field 3 is `label_name`, not `ref`". The test is intentionally redundant on the happy path (no field 3, no field 4 → `ref == ""` is already covered by `TestParseResourceRefName_NoRef`); its value is in pinning the wire contract for the case where field 3 IS set with `label_name="main"`.
+
+## Live e2e Test Results (post-execution, with `EASYP_GH_TOKEN`)
+
+Run after the plan shipped (commit `d60e50f`), to confirm whether the v1.30.1 and v1.69.0 ref-honoring regressions were actually closed.
+
+| Test | Result | Notes |
+| ------ | ------ | ----- |
+| `TestRefRespected_ModUpdate_MatchesUpstreamSHA` | PASS | v1.69.0 ref-pinned → SHA `27156597fdf4fb77004434d4409154a230dc9a32` correctly resolved. Confirms the field-4 fix works for v1beta1 ref-pinned requests. |
+| `TestRefRespected_ModUpdate_DiffersFromHead/v1.69.0` | PASS | v1.69.0 no-ref → HEAD correctly returned. Confirms the field-4 fix works for v1beta1 no-ref requests. |
+| `TestRefRespected_DepUpdate_DiffersFromHead` | PASS (after retry) | First run failed on transient `net/http: TLS handshake timeout` to `raw.githubusercontent.com`; retry passed. |
+| `TestRefRespected_ModUpdate_DiffersFromHead/v1.30.1` | FAIL | 422 from GitHub. NOT FIXED by Phase 20 — see "Open Issue" below. |
+
+## Open Issue: v1.30.1 path is a different bug
+
+**The Phase 20 RESEARCH.md (line 31) claimed:**
+> buf v1.30.1 calls `buf.registry.module.v1beta1.CommitService/GetCommits` with a `Name` that contains `owner`, `module`, and `label_name="main"` (the default label name). The `ref` field at field 4 is absent.
+
+**The live server log shows the actual v1.30.1 path is:**
+
+```text
+"path":"/buf.alpha.registry.v1alpha1.ResolveService/GetModulePins"
+"upstream call","target":"multisource.GetMeta","owner":"googleapis","repo":"googleapis","module":"googleapis","commit":"main"
+"error":"resolving ref \"main\": GET .../commits/main: 422 No commit found for SHA: main"
+```
+
+The v1.30.1 client uses v1alpha1 (not v1beta1), and sends `ModuleReference.reference="main"` directly through the generated proto. The wire parse is not the issue — the proto field is correctly read as field 4 by `connect-go`'s generated code. The issue is that the proxy at `modulepins.go:46` then passes `"main"` to `GetMeta`, which calls `repos.GetCommit("main")` because `"main"` is not a SHA, and GitHub returns 422 (the `/commits/{ref}` endpoint expects a SHA, not a branch name).
+
+### Required follow-up (out of Phase 20 scope)
+
+The v1.30.1 case requires one of:
+
+1. **Provider-level carve-out** (the "defensive update" the research called optional but is actually load-bearing for v1.30.1): in `github/getrepo.go:48-58` and `bitbucket/getrepo.go:43-53`, when the commit is the repo's default branch name (already known from `getRepo`), return the HEAD SHA from `getRepo` without calling `repos.GetCommit`. This is exactly the carve-out Phase 18 removed (see RESEARCH.md:43-58); the field-4 fix made the v1beta1 case unnecessary but the v1alpha1 case still needs it.
+
+2. **v1alpha1-level normalization:** in `modulepins.go:46` and `bynames.go:70`, if `v.GetReference()` matches the default branch name or `""`, pass `""` to `GetMeta` instead. Requires either fetching the default branch first or comparing client-side before calling GetMeta.
+
+Option 1 is smaller (2 lines per provider) and matches the pre-Phase-18 behavior the research alluded to. **Recommend: open Phase 21 (or extend Phase 20 with a 20-02 plan) to apply Option 1.**
 
 ## Deviations from Plan
 
