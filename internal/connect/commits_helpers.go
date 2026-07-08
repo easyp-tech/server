@@ -193,10 +193,11 @@ func parseResourceRefName(msg []byte) *moduleRef {
 			v, mLen := protowire.ConsumeBytes(msg)
 			msg = msg[mLen:]
 			module = string(v)
-		} else if num == 3 && typ == protowire.BytesType {
-			// buf BSR Name.ref (branch/tag). Optional: older buf clients
-			// do not send it; the ref-aware code paths tolerate an empty
-			// value (treated as HEAD by the providers).
+		} else if num == 4 && typ == protowire.BytesType {
+			// buf BSR Name.ref (proto field 4) — the Name.child oneof is
+			// {label_name=3, ref=4}. Optional: older buf clients do not
+			// send it; the ref-aware code paths tolerate an empty value
+			// (treated as HEAD by the providers via the commit=="" branch).
 			v, mLen := protowire.ConsumeBytes(msg)
 			msg = msg[mLen:]
 			ref = string(v)
