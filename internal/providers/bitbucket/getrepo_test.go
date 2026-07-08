@@ -149,3 +149,57 @@ func TestGetMeta_ResolvesRef(t *testing.T) {
 
 // _ = strings.HasPrefix keeps the import stable if a future test needs it.
 var _ = strings.HasPrefix
+
+// TestGetMeta_DefaultBranchName_bitbucket is the regression guard for
+// the v1.30.1 v1alpha1 case caught by Phase 19 e2e tests. v1.30.1
+// sends ModuleReference.reference="main" (the default label name) via
+// v1alpha1.ResolveService/GetModulePins, and the proxy at
+// modulepins.go:46 passes "main" to getMeta. The pre-fix provider code
+// routed "main" through c.getCommit (Bitbucket's /commits/main
+// endpoint), which expects a SHA and rejects branch names with 404.
+// After the Phase 20-02 default-branch carve-out, "main" is recognized
+// as a synonym for "the default branch" and the HEAD already in
+// meta.Commit (set by getRepo from repo.LatestCommit) is returned
+// without a second round-trip to /commits/main.
+//
+// This test pins the contract: when commit equals meta.DefaultBranch,
+// getMeta returns HEAD and does NOT call /commits/{commit}. A
+// regression that re-routes the default branch name through the
+// ref-resolution API is caught by the explicit t.Errorf on the
+// /commits/main path (any call to /commits/main fails the test).
+func TestGetMeta_DefaultBranchName_bitbucket(t *testing.T) {
+	const headCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	commitsHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == testBasePath+"/branches/default":
+			// HEAD lookup — getRepo calls this. Returns the default
+			// branch ("main") with its latest commit.
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"` + headCommit + `","displayId":"main","type":"BRANCH","latestCommit":"` + headCommit + `","latestChangeset":"` + headCommit + `","isDefault":true}`))
+		case r.URL.Path == testBasePath+"/commits/main":
+			// The pre-fix bug path: the carve-out must prevent this
+			// call. If we see it, the test fails.
+			commitsHits++
+			t.Errorf("unexpected /commits/main call: default-branch carve-out should not call /commits/{commit}")
+			http.NotFound(w, r)
+		default:
+			t.Errorf("unexpected upstream call to %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := connect(nil, "", "", srv.URL+testBasePath)
+	meta, err := c.getMeta(context.Background(), "main")
+	if err != nil {
+		t.Fatalf("getMeta(\"main\") unexpected error: %v", err)
+	}
+	if commitsHits != 0 {
+		t.Errorf("expected 0 /commits/ calls for default-branch name, got %d", commitsHits)
+	}
+	if meta.Commit != headCommit {
+		t.Fatalf("meta.Commit = %q, want %q (HEAD from getRepo via /branches/default)", meta.Commit, headCommit)
+	}
+}
