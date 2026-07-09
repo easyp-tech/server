@@ -108,6 +108,7 @@ func NewWithConfig(
 		commitMap:       make(map[string]moduleRef),
 		infoCache:       make(map[string]commitInfoCache),
 		filesMap:        make(map[string][]content.File),
+		cidSha:          make(map[string]string),
 		knownOwners:     knownOwners,
 		singleModule:    singleModule,
 		missCache:       make(map[string]time.Time),

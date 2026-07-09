@@ -248,6 +248,17 @@ func (r *recordingProvider) GetMeta(_ context.Context, _, _, commit string) (con
 	if m, ok := r.bySha[commit]; ok {
 		return m, nil
 	}
+	// Prefix match: real providers (GitHub via repos.GetCommit, Bitbucket
+	// via its commit-fetch API) resolve short-SHA prefixes (>=7 hex) to the
+	// full SHA. The mock must mirror that so ServeGraph's
+	// commitUUIDInverse→28-hex-prefix probe path can be exercised end-to-end
+	// against this fixture. Without it the mock would reject the 28-hex
+	// prefix that resolveUUIDRef derives from a buf-issued 32-hex cid.
+	for fullSHA, m := range r.bySha {
+		if strings.HasPrefix(fullSHA, commit) {
+			return m, nil
+		}
+	}
 	return content.Meta{}, fmt.Errorf("mock: upstream has no commit %q", commit)
 }
 
@@ -1498,6 +1509,7 @@ func newTestCommitHandler(repo provider) *commitServiceHandler {
 		commitMap:       make(map[string]moduleRef),
 		infoCache:       make(map[string]commitInfoCache),
 		filesMap:        make(map[string][]content.File),
+		cidSha:          make(map[string]string),
 		missCache:       make(map[string]time.Time),
 		probeTimeout:    time.Second,
 		probeNegativeTTL: time.Minute,
