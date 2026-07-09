@@ -13,7 +13,7 @@ findings:
   warning: 4
   info: 1
   total: 6
-status: issues_found
+status: all_fixed
 ---
 
 # Phase 24: Code Review Report
@@ -21,7 +21,7 @@ status: issues_found
 **Reviewed:** 2026-07-09
 **Depth:** standard
 **Files Reviewed:** 4
-**Status:** issues_found
+**Status:** all_fixed
 
 ## Summary
 
@@ -49,6 +49,8 @@ timeout; and a weak content assertion in the e2e gate.
 ## Critical Issues
 
 ### CR-01: `resolveUUIDRef` prefix-probe bypasses `probeSem`, `missCache`, and `probeTimeout`
+
+**Status:** Fixed in 359ab22 — replicated all four defenses (probeSem, missCache, probeTimeout, isTransientErr) inside resolveUUIDRef; routing through probeCommitID directly was structurally infeasible (it fans out across ALL sources, but ServeGraph has the specific owner/module). Covered WR-02 (per-call timeout) in the same change. New test TestServeGraph_UUIDRefColdCache_NegativeCachesMiss.
 
 **File:** `internal/connect/commits.go:1004-1037` (called from `ServeGraph` at `:371`)
 
@@ -132,6 +134,8 @@ func (h *commitServiceHandler) resolveUUIDRef(ctx context.Context, ref moduleRef
 
 ### WR-01: Asymmetric infoCache cid-gate — pinned-cid resolution poisons subsequent HEAD/SHA/tag requests
 
+**Status:** Fixed in c0a34c1 — added `cidPinned bool` to commitInfoCache (commitID is always a cid, so isUUID(cached.commitID) cannot distinguish; the flag records the request shape that minted the entry). Symmetric gate at all three write sites. New test TestServeGraph_PinnedCidDoesNotPoisonHeadRequest.
+
 **File:** `internal/connect/commits.go:331`
 
 **Issue:**
@@ -170,6 +174,8 @@ re-resolves rather than serving the cached cid's content.
 
 ### WR-02: `resolveUUIDRef` GetMeta call has no per-call timeout
 
+**Status:** Fixed in 359ab22 — inherited via the CR-01 fix, which wraps the GetMeta in `context.WithTimeout(ctx, h.probeTimeout)` (guarded on probeTimeout > 0 so the zero-value "enhancements off" default preserves request-context behavior).
+
 **File:** `internal/connect/commits.go:1021`
 
 **Issue:**
@@ -182,6 +188,8 @@ proxies, idle-pinned connections, etc.). The new path regressed that defense.
 **Fix:** wrap the call as in the snippet in CR-01.
 
 ### WR-03: `ServeDownload` fetch path does not refresh `infoCache` after resolving a pinned cid
+
+**Status:** Fixed in b40aadf — fetch path now writes back commitMap, cidSha, infoCache (with cidPinned), and filesMap after a successful pinned-cid fetch. New test TestServeDownload_PinnedCidRepeatHitsFilesCache asserts the second identical request makes zero new GetMeta/GetFiles calls.
 
 **File:** `internal/connect/commits.go:752-754`
 
@@ -224,6 +232,8 @@ the next pinned-cid request will then hit the files-cache directly.)
 
 ### WR-04: `TestGeneratePinnedCommit_NotHEAD` content assertion is too weak to detect HEAD serving
 
+**Status:** Fixed in 8006c65 — replaced the non-discriminating `package google.type` content check with a structured log assertion requiring the pinned SHA to appear as a `commit=` attribute on a serving-decision branch line (uuid_ref_resolved / info_cache_writeback / files_cache_hit / digest_b5_wrap / digest_b4_keep / commit_id_probe_hit). E2e still skips cleanly without EASYP_GH_TOKEN.
+
 **File:** `e2e/generate_test.go:160-169`
 
 **Issue:**
@@ -249,6 +259,8 @@ line (proving it was the resolution target), not just anywhere in the log.
 ## Info
 
 ### IN-01: `commitUUIDInverse` relies on 28-hex prefix uniqueness inside one repo
+
+**Status:** Fixed in dd6d26b — the 2^112 uniqueness invariant is now explicitly documented at both call sites (resolveUUIDRef via the CR-01 change, and probeCommitID). Documentation hardening only.
 
 **File:** `internal/connect/commits_helpers.go:116-132` (used at `commits.go:1017`)
 
