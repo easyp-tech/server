@@ -682,6 +682,104 @@ func TestServeDownload_PinnedCidNotServedFromWrongInfoCache(t *testing.T) {
 	}
 }
 
+// dualCountingProvider wraps a provider to count GetMeta and GetFiles calls so
+// tests can assert that a warm cache suppresses repeat upstream traffic. Unlike
+// countingProvider (blobs_test.go, GetFiles-only via atomic pointer), this one
+// tracks both methods locally for the WR-03 repeat-request assertion.
+type dualCountingProvider struct {
+	provider
+	getMetaCalls  int
+	getFilesCalls int
+}
+
+func (c *dualCountingProvider) GetMeta(ctx context.Context, owner, repo, commit string) (content.Meta, error) {
+	c.getMetaCalls++
+	return c.provider.GetMeta(ctx, owner, repo, commit)
+}
+
+func (c *dualCountingProvider) GetFiles(ctx context.Context, owner, repo, commit string) ([]content.File, error) {
+	c.getFilesCalls++
+	return c.provider.GetFiles(ctx, owner, repo, commit)
+}
+
+// TestServeDownload_PinnedCidRepeatHitsFilesCache confirms WR-03: after the
+// first pinned-cid Download resolves and writes back infoCache + filesMap,
+// the second identical pinned-cid Download makes ZERO new GetMeta/GetFiles
+// calls (it must hit the files-cache directly).
+func TestServeDownload_PinnedCidRepeatHitsFilesCache(t *testing.T) {
+	const (
+		pinSHA = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+		owner  = "grpc-ecosystem"
+		module = "grpc-gateway"
+	)
+	pinCID, _ := commitUUID(pinSHA)
+	ref := moduleRef{owner: owner, module: module}
+	pinFile := content.File{Path: "pin_only.txt", Data: []byte("pinned commit content")}
+
+	base := &mockProvider{
+		byCommit: map[string]content.Meta{
+			pinSHA: {Commit: pinSHA, DefaultBranch: "main"},
+		},
+		filesByCommit: map[string][]content.File{
+			pinSHA: {pinFile},
+		},
+	}
+	repo := &dualCountingProvider{provider: base}
+
+	h := newTestCommitHandler(repo)
+	// commitMap + cidSha are pre-seeded so the first request resolves via the
+	// fetch path (infoCache starts empty → files-cache miss → GetMeta/GetFiles
+	// → writeback). This models the first-ever pinned-cid Download.
+	h.commitMap[pinCID] = ref
+	h.cidSha[pinCID] = pinSHA
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/buf.registry.module.v1.DownloadService/", h.ServeDownload)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	doDownload := func(label string) []byte {
+		resp, err := http.Post(srv.URL+"/buf.registry.module.v1.DownloadService/Download",
+			"application/proto", bytes.NewReader(buildDownloadRequest(pinCID)))
+		if err != nil {
+			t.Fatalf("%s download failed: %v", label, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d, want %d; body=%x", label, resp.StatusCode, http.StatusOK, body)
+		}
+		return body
+	}
+
+	firstBody := doDownload("first")
+	firstMeta := repo.getMetaCalls
+	firstFiles := repo.getFilesCalls
+	if firstMeta == 0 {
+		t.Fatal("first download should have made at least one GetMeta call (cold cache)")
+	}
+	if firstFiles == 0 {
+		t.Fatal("first download should have made at least one GetFiles call (cold cache)")
+	}
+	if !bytes.Contains(firstBody, pinFile.Data) {
+		t.Errorf("first download did not return the pinned file content; body=%x", firstBody)
+	}
+
+	// Second identical request must hit the files-cache: no new upstream calls.
+	secondBody := doDownload("second")
+	if repo.getMetaCalls != firstMeta {
+		t.Errorf("second download made %d new GetMeta call(s); want 0 (files-cache must hit). before=%d after=%d",
+			repo.getMetaCalls-firstMeta, firstMeta, repo.getMetaCalls)
+	}
+	if repo.getFilesCalls != firstFiles {
+		t.Errorf("second download made %d new GetFiles call(s); want 0 (files-cache must hit). before=%d after=%d",
+			repo.getFilesCalls-firstFiles, firstFiles, repo.getFilesCalls)
+	}
+	if !bytes.Contains(secondBody, pinFile.Data) {
+		t.Errorf("second download did not return the pinned file content; body=%x", secondBody)
+	}
+}
+
 // buildDownloadRequest builds a protobuf-encoded Download request using a commit ID.
 func buildDownloadRequest(commitID string) []byte {
 	// ResourceRef: id=1

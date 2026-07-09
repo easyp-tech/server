@@ -764,9 +764,6 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 				slog.String("upstream_error", err.Error()))
 			return
 		}
-		h.commitMu.Lock()
-		h.cidSha[cid] = meta.Commit
-		h.commitMu.Unlock()
 		digest, _ = h.computeB4DigestFromFiles(files)
 		isV1 := !strings.Contains(r.URL.Path, "v1beta1")
 		if isV1 {
@@ -795,6 +792,26 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 				slog.Bool("is_v1", isV1),
 			)
 		}
+		// Write back the full resolution so the next identical pinned-cid
+		// Download hits the files-cache directly (WR-03). Without this, every
+		// repeat request re-ran cidShaLookup (hit) → GetMeta → GetFiles →
+		// re-compute digest, because the infoCache entry still held the stale
+		// pre-resolution state and filesMap[cid] was never populated. Mirror
+		// the ServeGraph writeback (and ServeHTTP's) so all three handlers
+		// converge on the same cached state.
+		h.commitMu.Lock()
+		h.commitMap[cid] = *ref
+		h.cidSha[cid] = meta.Commit
+		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
+			commitID:  cid,
+			commit:    meta.Commit,
+			ownerID:   ref.owner,
+			moduleID:  ref.owner + "/" + ref.module,
+			digest:    digest,
+			cidPinned: isUUID(commitID),
+		}
+		h.filesMap[cid] = files
+		h.commitMu.Unlock()
 	}
 
 	commit := buildCommitRaw(cid, cached.ownerID, cached.moduleID, digest)
