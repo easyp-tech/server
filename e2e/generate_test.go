@@ -155,34 +155,62 @@ func TestGeneratePinnedCommit_NotHEAD(t *testing.T) {
 					version, srv.Output.String())
 			}
 
-			// Content sanity: every generated file is non-empty and carries the
-			// expected package marker.
+			// Content sanity: every generated file is non-empty. (The
+			// `package google.type` marker is intentionally NOT asserted
+			// here — WR-04: it exists at both the pinned tag and HEAD, so
+			// it cannot distinguish the two. The decisive not-HEAD check
+			// below inspects the proxy's decision log instead.)
 			for _, f := range generated {
 				info, err := os.Stat(f)
 				require.NoError(t, err, "generated file %s not found", f)
 				require.NotZero(t, info.Size(), "generated file %s is empty", f)
-				content, err := os.ReadFile(f)
-				require.NoError(t, err, "reading generated file %s", f)
-				if !strings.Contains(string(content), "package google.type") {
-					t.Fatalf("generated file %s does not contain 'package google.type'", f)
-				}
 			}
 
-			// The decisive not-HEAD assertion: the proxy's server log must
-			// contain the PINNED commit's real git SHA. This SHA only appears
-			// if ServeGraph's UUID-resolution branch (cidSha hit or
-			// commitUUIDInverse 28-hex prefix probe) successfully resolved
-			// the pinned cid. In the bug state (cid forwarded upstream 422,
-			// or infoCache serving HEAD), the pinned SHA never appears in the
-			// log — only HEAD's SHA does, or the request fails outright.
+			// The decisive not-HEAD assertion (WR-04): the proxy's server
+			// log must carry the PINNED commit's real git SHA as the value
+			// of a structured `commit=` attribute AND on a line tagged with
+			// a serving-decision branch. Only the cid->sha resolution paths
+			// (uuid_ref_resolved, info_cache_writeback, files_cache_hit, or
+			// the digest_* branches) emit `commit=<pinnedSHA>`, and each of
+			// those branches only runs after the proxy actually fetched and
+			// processed the pinned commit's content. A bare substring match
+			// on pinnedSHA is not enough — it could appear in unrelated
+			// debug text — and `package google.type` cannot distinguish the
+			// pinned tag from HEAD. In the bug state (cid forwarded upstream
+			// 422, or infoCache serving HEAD), only HEAD's SHA appears in a
+			// serving branch (or the request fails outright).
 			srvOut := srv.Output.String()
-			if !strings.Contains(srvOut, pinnedSHA) {
+			const commitAttr = "commit="
+			servingBranches := []string{
+				"branch=uuid_ref_resolved",
+				"branch=info_cache_writeback",
+				"branch=files_cache_hit",
+				"branch=digest_b5_wrap",
+				"branch=digest_b4_keep",
+				"branch=commit_id_probe_hit",
+			}
+			pinnedInServingBranch := false
+			for _, line := range strings.Split(srvOut, "\n") {
+				if !strings.Contains(line, commitAttr+pinnedSHA) {
+					continue
+				}
+				for _, b := range servingBranches {
+					if strings.Contains(line, b) {
+						pinnedInServingBranch = true
+						break
+					}
+				}
+				if pinnedInServingBranch {
+					break
+				}
+			}
+			if !pinnedInServingBranch {
 				t.Errorf("proxy did not serve the pinned commit %s (%s).\n"+
-					"Server log does not contain the pinned SHA %q.\n"+
-					"This means the cid->sha resolution (Phase 24) did not fire — "+
+					"Server log has no serving-decision line with %q and a %s* branch.\n"+
+					"This means the cid->sha resolution (Phase 24) did not produce content for the pinned commit — "+
 					"the proxy either forwarded the cid upstream (422) or served HEAD.\n"+
 					"Server output:\n%s",
-					generatePinnedRef, pinnedUUID, pinnedSHA, srvOut)
+					generatePinnedRef, pinnedUUID, commitAttr+pinnedSHA, "branch=", srvOut)
 			}
 			// And the log must reference the pinned cid (the buf.lock value)
 			// alongside the SHA — confirming the cid was the input to the
