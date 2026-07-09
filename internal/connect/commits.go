@@ -29,6 +29,16 @@ type commitInfoCache struct {
 	ownerID  string
 	moduleID string
 	digest   []byte
+	// cidPinned is true when this entry was minted for a request whose
+	// Name.ref was a buf-issued 32-hex cid (the normal buf.lock state).
+	// infoCache is keyed by owner/module only, so without this flag a
+	// pinned-cid writeback would silently poison every subsequent HEAD /
+	// SHA / tag request on the same module (WR-01): the cid-gate can't
+	// tell the entry apart from a HEAD-minted one, because commitID is
+	// always a cid (the output of commitUUID). cidPinned records the
+	// request shape that produced the entry so the gate can force a
+	// re-resolve when a non-pinned request lands on a pinned entry.
+	cidPinned bool
 }
 
 type commitServiceHandler struct {
@@ -232,11 +242,12 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.commitMap[cid] = ref
 		h.cidSha[cid] = meta.Commit
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
-			commitID: cid,
-			commit:   meta.Commit,
-			ownerID:  ref.owner,
-			moduleID: ref.owner + "/" + ref.module,
-			digest:   digest,
+			commitID:  cid,
+			commit:    meta.Commit,
+			ownerID:   ref.owner,
+			moduleID:  ref.owner + "/" + ref.module,
+			digest:    digest,
+			cidPinned: isUUID(ref.ref),
 		}
 		h.commitMu.Unlock()
 	}
@@ -321,14 +332,17 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		h.commitMu.RLock()
 		cached, ok := h.infoCache[key]
 		h.commitMu.RUnlock()
-		// infoCache is keyed by owner/module only. When the request pins a
-		// specific buf-issued cid via Name.ref (the normal buf.lock state),
-		// a cache entry minted for a DIFFERENT cid (HEAD, a tag, …) must
-		// NOT be served — otherwise the proxy hands out the wrong commit's
-		// id+digest and the client fails with "no content returned for
-		// commit ID <pinned>". Treat a cid mismatch as a miss and fall
-		// through to the resolution path.
-		if ok && (!isUUID(ref.ref) || cached.commitID == ref.ref) {
+		// infoCache is keyed by owner/module only, so the cid-gate must be
+		// SYMMETRIC (WR-01):
+		//   - A cid-pinned request must only hit an entry minted for the SAME
+		//     cid (a HEAD/tag/SHA-minted entry has a different commitID).
+		//   - A non-pinned request (HEAD/SHA/tag, i.e. ref.ref is not a cid)
+		//     must only hit an entry that was itself minted by a non-pinned
+		//     request. Without this reverse check, a single pinned-cid
+		//     writeback would stick every subsequent HEAD request on that
+		//     module to the pinned commit until restart.
+		requestIsUUID := isUUID(ref.ref)
+		if ok && ((!requestIsUUID && !cached.cidPinned) || (requestIsUUID && cached.commitID == ref.ref)) {
 			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
 				slog.String("handler", "ServeGraph"),
 				slog.String("procedure", "GraphService/GetGraph"),
@@ -468,11 +482,12 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		h.commitMap[cid] = ref
 		h.cidSha[cid] = meta.Commit
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
-			commitID: cid,
-			commit:   meta.Commit,
-			ownerID:  ref.owner,
-			moduleID: ref.owner + "/" + ref.module,
-			digest:   digest,
+			commitID:  cid,
+			commit:    meta.Commit,
+			ownerID:   ref.owner,
+			moduleID:  ref.owner + "/" + ref.module,
+			digest:    digest,
+			cidPinned: isUUID(ref.ref),
 		}
 		h.commitMu.Unlock()
 		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
@@ -1362,13 +1377,15 @@ func (h *commitServiceHandler) registerResolvedAlias(id, sha, owner, module stri
 		existing.commit = sha
 		existing.ownerID = owner
 		existing.moduleID = key
+		existing.cidPinned = isUUID(id)
 		h.infoCache[key] = existing
 	} else {
 		h.infoCache[key] = commitInfoCache{
-			commitID: id,
-			commit:   sha,
-			ownerID:  owner,
-			moduleID: key,
+			commitID:  id,
+			commit:    sha,
+			ownerID:   owner,
+			moduleID:  key,
+			cidPinned: isUUID(id),
 		}
 	}
 	h.commitMu.Unlock()

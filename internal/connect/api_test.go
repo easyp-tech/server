@@ -241,10 +241,19 @@ type recordingProvider struct {
 	meta    content.Meta
 	bySha   map[string]content.Meta
 	getMeta []string
+	// head, when set, is returned for an empty commit arg (HEAD). Real
+	// providers resolve HEAD to the default-branch tip; the mock cannot
+	// infer which bySha entry that is, so it must be told explicitly.
+	// Without this, the prefix-match loop would match every entry for ""
+	// (HasPrefix(x, "") is always true) and return a nondeterministic one.
+	head *content.Meta
 }
 
 func (r *recordingProvider) GetMeta(_ context.Context, _, _, commit string) (content.Meta, error) {
 	r.getMeta = append(r.getMeta, commit)
+	if commit == "" && r.head != nil {
+		return *r.head, nil
+	}
 	if m, ok := r.bySha[commit]; ok {
 		return m, nil
 	}
@@ -254,9 +263,13 @@ func (r *recordingProvider) GetMeta(_ context.Context, _, _, commit string) (con
 	// commitUUIDInverse→28-hex-prefix probe path can be exercised end-to-end
 	// against this fixture. Without it the mock would reject the 28-hex
 	// prefix that resolveUUIDRef derives from a buf-issued 32-hex cid.
-	for fullSHA, m := range r.bySha {
-		if strings.HasPrefix(fullSHA, commit) {
-			return m, nil
+	// Only fire for non-empty args: HasPrefix(x, "") is always true, so an
+	// empty commit must be handled by the head branch above (or miss).
+	if commit != "" {
+		for fullSHA, m := range r.bySha {
+			if strings.HasPrefix(fullSHA, commit) {
+				return m, nil
+			}
 		}
 	}
 	return content.Meta{}, fmt.Errorf("mock: upstream has no commit %q", commit)
@@ -519,6 +532,68 @@ func TestServeGraph_UUIDRefColdCache_NegativeCachesMiss(t *testing.T) {
 	}
 	if got := len(repo.getMeta) - firstCalls; got != 0 {
 		t.Errorf("negative-cached cid re-probed; %d new GetMeta call(s), want 0", got)
+	}
+}
+
+// TestServeGraph_PinnedCidDoesNotPoisonHeadRequest confirms WR-01's reverse
+// direction: after a pinned-cid request writes back an infoCache entry for a
+// module, a subsequent HEAD (empty ref) request for the same module must
+// RE-RESOLVE rather than be served the pinned cid's entry. Without the
+// symmetric cid-gate the pinned writeback would stick the module to that
+// commit for every later HEAD/SHA/tag request until restart.
+func TestServeGraph_PinnedCidDoesNotPoisonHeadRequest(t *testing.T) {
+	const (
+		pinSHA  = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9" // pinned older commit
+		headSHA = "34a6674c253f287533e8e904d89eb530b574128d" // main HEAD
+	)
+	pinCID, _ := commitUUID(pinSHA)
+	headCID, _ := commitUUID(headSHA)
+
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			pinSHA:  {Commit: pinSHA, DefaultBranch: "main"},
+			headSHA: {Commit: headSHA, DefaultBranch: "main"},
+		},
+		head: &content.Meta{Commit: headSHA, DefaultBranch: "main"},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// 1) Prime: a pinned-cid request resolves pinSHA and writes back an
+	//    infoCache entry minted for the cid (cidPinned=true).
+	if _, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", pinCID))); err != nil {
+		t.Fatalf("pinned prime failed: %v", err)
+	}
+	primeCalls := len(repo.getMeta)
+
+	// 2) HEAD request (empty ref) for the same module. The symmetric gate
+	//    must treat the pinned entry as a miss and re-resolve HEAD.
+	//    buildV1GetGraphRequest (no ref field) yields ref.ref == "".
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequest("grpc-ecosystem", "grpc-gateway")))
+	if err != nil {
+		t.Fatalf("HEAD request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD request after pin: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	// Must have re-resolved: at least one new GetMeta call (for HEAD).
+	if got := len(repo.getMeta) - primeCalls; got < 1 {
+		t.Errorf("HEAD request after pinned writeback made %d new GetMeta call(s); want >= 1 (symmetric gate must re-resolve). calls=%v",
+			got, repo.getMeta)
+	}
+	// Must serve HEAD's cid, not the pinned cid.
+	if bytes.Contains(body, []byte(pinCID)) && !bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("HEAD request served the pinned cid %q instead of re-resolving HEAD %q; body=%x",
+			pinCID, headCID, body)
+	}
+	if !bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("HEAD request did not return HEAD commit_id %q; body=%x", headCID, body)
 	}
 }
 
