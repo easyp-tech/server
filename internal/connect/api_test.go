@@ -211,6 +211,150 @@ func buildV1GetGraphRequest(owner, module string) []byte {
 	return req
 }
 
+// buildV1GetGraphRequestWithRef builds a v1 GetGraph request whose Name carries
+// a ref (proto field 4) — the branch/tag/commit the client pinned. buf.lock
+// stores the proxy-minted 32-hex commit_id here, so ref is usually that id.
+func buildV1GetGraphRequestWithRef(owner, module, ref string) []byte {
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, owner)
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, module)
+	name = protowire.AppendTag(name, 4, protowire.BytesType)
+	name = protowire.AppendString(name, ref)
+
+	var resRef []byte
+	resRef = protowire.AppendTag(resRef, 2, protowire.BytesType)
+	resRef = append(resRef, protowire.AppendVarint(nil, uint64(len(name)))...)
+	resRef = append(resRef, name...)
+
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType)
+	req = append(req, protowire.AppendVarint(nil, uint64(len(resRef)))...)
+	req = append(req, resRef...)
+	return req
+}
+
+// recordingProvider is a mockProvider that records every commit arg passed to
+// GetMeta, so tests can assert which ref the handler forwarded upstream.
+type recordingProvider struct {
+	meta    content.Meta
+	bySha   map[string]content.Meta
+	getMeta []string
+}
+
+func (r *recordingProvider) GetMeta(_ context.Context, _, _, commit string) (content.Meta, error) {
+	r.getMeta = append(r.getMeta, commit)
+	if m, ok := r.bySha[commit]; ok {
+		return m, nil
+	}
+	return content.Meta{}, fmt.Errorf("mock: upstream has no commit %q", commit)
+}
+
+func (r *recordingProvider) GetFiles(_ context.Context, _, _, _ string) ([]content.File, error) {
+	return nil, nil
+}
+func (r *recordingProvider) Repositories() []source.Source { return nil }
+
+// TestServeGraph_BufCommitIDRefNotForwardedToUpstream confirms Defect 1:
+// when a client pins a dependency via the proxy-minted 32-hex buf commit_id
+// (the value buf.lock stores), ServeGraph must NOT forward that 32-hex id to
+// the upstream GetMeta as if it were a git SHA. The upstream only knows the
+// 40-hex git SHA; sending the 32-hex id yields a 422 "No commit found for SHA".
+//
+// Reproduces prod failure: grpc-ecosystem/grpc-gateway pinned at
+// commit_id e91b8a68fe214081808d79f1a1a4f09e (derived from git sha
+// e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9). Expect: graph resolves to the
+// pinned commit (200). Actual (bug): GetMeta is called with the 32-hex id and
+// the request fails.
+func TestServeGraph_BufCommitIDRefNotForwardedToUpstream(t *testing.T) {
+	const (
+		gitSHA = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+		cid    = "e91b8a68fe214081808d79f1a1a4f09e" // == commitUUID(gitSHA)
+	)
+	// Upstream recognizes ONLY the real 40-hex git SHA — mirrors GitHub,
+	// which returns 422 for the 32-hex buf id.
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			gitSHA: {Commit: gitSHA, DefaultBranch: "main"},
+		},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", cid)))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d (pinned commit must resolve)", resp.StatusCode, http.StatusOK)
+	}
+	for _, c := range repo.getMeta {
+		if c == cid {
+			t.Errorf("GetMeta forwarded buf commit_id %q to upstream as a git SHA — "+
+				"upstream rejects it (422). Forward the 40-hex git SHA %q instead. calls=%v",
+				cid, gitSHA, repo.getMeta)
+		}
+	}
+}
+
+// TestServeGraph_InfoCacheMustNotServeWrongCommit confirms Defect 2:
+// infoCache is keyed only by owner/module, so once ANY commit for a module is
+// cached, a later request pinning a DIFFERENT commit id returns the cached
+// (wrong) commit's id+digest. The proxy must honor the requested commit.
+//
+// Reproduces prod "no content returned for commit ID e91b8a68...": the proxy
+// served main-HEAD content under the pinned commit_id.
+func TestServeGraph_InfoCacheMustNotServeWrongCommit(t *testing.T) {
+	const (
+		headSHA = "34a6674c253f287533e8e904d89eb530b574128d" // main HEAD
+		pinSHA  = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9" // pinned older commit
+	)
+	headCID, _ := commitUUID(headSHA)
+	pinCID, _ := commitUUID(pinSHA)
+
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			headSHA: {Commit: headSHA, DefaultBranch: "main"},
+			pinSHA:  {Commit: pinSHA, DefaultBranch: "main"},
+		},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// 1) Prime infoCache with main HEAD (e.g. a prior HEAD/tag resolution).
+	if _, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", headSHA))); err != nil {
+		t.Fatalf("prime request failed: %v", err)
+	}
+
+	// 2) Now pin a different commit via its buf id. Must resolve to pinCID, not headCID.
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", pinCID)))
+	if err != nil {
+		t.Fatalf("pinned request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("graph returned main-HEAD commit_id %q for a request pinning %q — "+
+			"infoCache keyed by owner/module served the wrong commit. body has HEAD id.",
+			headCID, pinCID)
+	}
+	if !bytes.Contains(body, []byte(pinCID)) {
+		t.Errorf("graph did not return the pinned commit_id %q; body=%x", pinCID, body)
+	}
+}
+
 // buildDownloadRequest builds a protobuf-encoded Download request using a commit ID.
 func buildDownloadRequest(commitID string) []byte {
 	// ResourceRef: id=1
