@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"io"
+	"net/http"
 
 	"log/slog"
 
@@ -34,7 +35,15 @@ type client struct {
 }
 
 func connect(log *slog.Logger, token string) client {
-	c := github.NewClient(nil)
+	// Wrap the default transport with bounded retry for transient
+	// upstream failures (TLS handshake timeouts to api.github.com /
+	// raw.githubusercontent.com, EOF, connection reset, 429, 5xx).
+	// GitHub reads fan out into many per-file GETs, so a single
+	// transient timeout must not fail the whole batch.
+	httpClient := &http.Client{
+		Transport: &retryTransport{base: http.DefaultTransport, log: log},
+	}
+	c := github.NewClient(httpClient)
 
 	if token != "" {
 		c = c.WithAuthToken(token)
