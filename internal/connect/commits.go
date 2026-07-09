@@ -1012,20 +1012,70 @@ func (h *commitServiceHandler) resolveUUIDRef(ctx context.Context, ref moduleRef
 	}
 
 	// (b) Cold cache — recover the 28-hex SHA prefix and probe upstream.
-	// Real providers accept short-SHA prefixes (>=7 hex on GitHub, >=11 on
-	// Bitbucket); 28 hex is well above both minimums.
-	prefix, err := commitUUIDInverse(cid)
-	if err != nil {
+	//
+	// This probe has the same shape as probeCommitID's per-source GetMeta, so
+	// it MUST inherit the same four defenses (CR-01/WR-02): the probeSem cap
+	// on concurrent upstream probes, the missCache negative cache, the
+	// probeTimeout per-call bound, and the isTransientErr classification that
+	// keeps a brief upstream outage from permanently negative-caching a real
+	// cid. Without these an unauthenticated client flooding ServeGraph with
+	// distinct 32-hex cids causes one unbounded upstream GetMeta per request
+	// with no concurrency cap and no negative caching — exactly the
+	// amplification probeSem exists to prevent.
+	if h.missCached(cid) {
 		return "", false
 	}
-	meta, err := h.api.repo.GetMeta(ctx, ref.owner, ref.module, prefix)
+	// commitUUIDInverse recovers the first 28 hex chars (14 bytes) of the
+	// original SHA. The 2^112 collision space is large enough that at most
+	// one commit in any realistic repo starts with this prefix; the
+	// HasPrefix check below verifies the upstream's answer honors it.
+	// (IN-01: 2^112 uniqueness assumption, verified by probeCommitID's
+	// identical HasPrefix validation.)
+	prefix, err := commitUUIDInverse(cid)
 	if err != nil {
+		h.rememberMiss(cid)
+		return "", false
+	}
+	// Bound concurrent probes so a flood of distinct unknown cids cannot
+	// amplify to unbounded upstream load (mirrors probeCommitID's acquire).
+	// Non-blocking: if the cap is reached, decline and let the caller fall
+	// through — the client retries and hits the negative cache once a probe
+	// eventually runs.
+	if h.probeSem != nil {
+		select {
+		case h.probeSem <- struct{}{}:
+			defer func() { <-h.probeSem }()
+		default:
+			return "", false
+		}
+	}
+	// Per-call timeout: request contexts alone are an insufficient bound on
+	// upstream hangs (proxies behind proxies, idle-pinned connections).
+	// probeCommitID wraps every per-source GetMeta the same way (WR-02). A
+	// zero probeTimeout (enhancements disabled) means "use the request
+	// context as-is" — mirrors how the rest of ServeGraph behaves when the
+	// CommitResolution knobs are off.
+	pctx := ctx
+	if h.probeTimeout > 0 {
+		var cancel context.CancelFunc
+		pctx, cancel = context.WithTimeout(ctx, h.probeTimeout)
+		defer cancel()
+	}
+	meta, err := h.api.repo.GetMeta(pctx, ref.owner, ref.module, prefix)
+	if err != nil {
+		// Only negative-cache on a definitive not-found. A transient error
+		// (timeout/cancel/network) leaves the cid retryable so a brief
+		// upstream outage does not lock out a real cid for ProbeNegativeTTL.
+		if !isTransientErr(err) {
+			h.rememberMiss(cid)
+		}
 		return "", false
 	}
 	if meta.Commit == "" || !strings.HasPrefix(meta.Commit, prefix) {
 		// Prefix-match validation: the upstream resolved the prefix to a
 		// commit that does NOT start with the recovered prefix. The
 		// source does not own this cid — do not trust the answer.
+		h.rememberMiss(cid)
 		return "", false
 	}
 

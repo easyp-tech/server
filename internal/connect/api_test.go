@@ -476,6 +476,52 @@ func TestServeGraph_UUIDRefColdCache_ProbesWithInversePrefix(t *testing.T) {
 	}
 }
 
+// TestServeGraph_UUIDRefColdCache_NegativeCachesMiss confirms CR-01: an
+// unknown cid (one the upstream does not own) is negative-cached after the
+// first prefix probe, so a retry within TTL does NOT re-probe. This is the
+// defense probeCommitID has against flooding distinct unknown ids; the
+// resolveUUIDRef path must inherit it. Uses newTestCommitHandler so
+// probeNegativeTTL is non-zero (testMux wires a zero TTL which disables
+// negative caching, mirroring the production "enhancements off" default).
+func TestServeGraph_UUIDRefColdCache_NegativeCachesMiss(t *testing.T) {
+	const (
+		// A 40-hex SHA the upstream does NOT own; commitUUID of its first
+		// 14 bytes yields a cid whose 28-hex prefix the mock will reject.
+		unknownSHA = "ffffffffffffffffffffffffffffffffffffffff"
+	)
+	unknownCID, _ := commitUUID(unknownSHA)
+
+	// recordingProvider rejects any commit it doesn't have (no bySha entry
+	// matches), returning a non-transient error so the miss is cacheable.
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			// Intentionally does NOT contain unknownSHA.
+		},
+	}
+	h := newTestCommitHandler(repo)
+
+	_, ok := h.resolveUUIDRef(context.Background(), moduleRef{owner: "o", module: "m"}, unknownCID)
+	if ok {
+		t.Fatal("unknown cid should not resolve")
+	}
+	firstCalls := len(repo.getMeta)
+	if firstCalls != 1 {
+		t.Fatalf("expected 1 GetMeta call on first probe, got %d", firstCalls)
+	}
+	if !h.missCached(unknownCID) {
+		t.Fatal("unknown cid not negative-cached after a definitive miss")
+	}
+
+	// Retry within TTL: must NOT re-probe.
+	_, ok2 := h.resolveUUIDRef(context.Background(), moduleRef{owner: "o", module: "m"}, unknownCID)
+	if ok2 {
+		t.Fatal("unknown cid should still not resolve on retry")
+	}
+	if got := len(repo.getMeta) - firstCalls; got != 0 {
+		t.Errorf("negative-cached cid re-probed; %d new GetMeta call(s), want 0", got)
+	}
+}
+
 // TestServeDownload_PinnedCidNotServedFromWrongInfoCache confirms the
 // ServeDownload fix: when infoCache was minted for HEAD (cid=headCID) but
 // the request pins a different cid (pinCID) whose cidSha is known, the
