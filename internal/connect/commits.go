@@ -1269,9 +1269,13 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, id string) (*m
 	}
 
 	// If id is a buf-issued UUID, derive the SHA prefix and probe with the
-	// prefix. The 14-byte recovery is lossy but 2^112 — sufficient to
-	// identify a single source among the configured set. The prefix-match
-	// validation below rules out collisions.
+	// prefix. commitUUIDInverse recovers the first 14 bytes (28 hex) of the
+	// original SHA. The collision space is 2^112 — the implicit uniqueness
+	// invariant (IN-01) is that at most one commit in any realistic repo
+	// starts with those 28 hex chars, so a prefix match unambiguously
+	// identifies the source commit. The HasPrefix validation below verifies
+	// the upstream's answer honors the prefix, closing the wrong-source
+	// alias risk if a future provider ever returned a colliding commit.
 	probeArg := id
 	if isUUID(id) {
 		prefix, err := commitUUIDInverse(id)
