@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/easyp-tech/server/e2e/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 // generatePinnedRef is the ref used by TestGenerateWithPinnedBufLock. It
@@ -91,6 +92,104 @@ func TestGenerateWithPinnedBufLock(t *testing.T) {
 				if !strings.Contains(string(content), "package google.type") {
 					t.Fatalf("generated file %s does not contain 'package google.type' (regression: proxy served wrong content or plugin produced wrong output)", f)
 				}
+			}
+		})
+	}
+}
+
+// TestGeneratePinnedCommit_NotHEAD is the Phase 24 e2e gate. It extends
+// TestGenerateWithPinnedBufLock with a stronger assertion: not only must
+// `buf generate` succeed with a buf.lock-pinned cid, but the proxy must
+// actually serve the PINNED commit's content — not HEAD's. This catches
+// both prod defects fixed in Phase 24:
+//
+//  1. ServeGraph forwarding the 32-hex cid to GitHub (422 -> 502) — the
+//     generate would fail outright.
+//  2. infoCache keyed by owner/module serving HEAD's content under the
+//     pinned cid — the generate would "succeed" but emit HEAD's code.
+//
+// Strategy: pin buf.lock to the cid derived from a known-old tag
+// (common-protos-1_3_1) whose SHA differs from master HEAD. After the
+// generate, assert the proxy's server log contains the PINNED commit's
+// real git SHA — which only appears if the cid->sha resolution (cidSha map
+// or commitUUIDInverse prefix probe) actually ran. In the bug state, only
+// HEAD's SHA appears (or the request fails outright).
+//
+// Token gate: EASYP_GH_TOKEN. Without it, the test skips cleanly.
+func TestGeneratePinnedCommit_NotHEAD(t *testing.T) {
+	token := testutil.RequireEnvToken(t, "EASYP_GH_TOKEN")
+
+	cfg := testutil.DefaultTestConfig()
+	cfg.GithubToken = token
+
+	versions := testutil.AvailableBufVersions(t)
+	if len(versions) == 0 {
+		t.Skip("no buf binaries cached under testdata/buf/")
+	}
+
+	// Ground truth: the real git SHAs at the pinned tag and at HEAD.
+	pinnedSHA := gitLsRemote(t, "https://github.com/googleapis/googleapis", "refs/tags/"+generatePinnedRef)
+	require.True(t, isLowerHex(pinnedSHA, 40), "pinned SHA %q is not 40-char lowercase hex", pinnedSHA)
+	headSHA := gitLsRemote(t, "https://github.com/googleapis/googleapis", "HEAD")
+	require.True(t, isLowerHex(headSHA, 40), "head SHA %q is not 40-char lowercase hex", headSHA)
+	require.NotEqual(t, headSHA, pinnedSHA,
+		"test fixture invariant: HEAD (%s) must differ from pinned tag %s (%s) for the not-HEAD assertion to be meaningful",
+		headSHA, generatePinnedRef, pinnedSHA)
+
+	pinnedUUID := commitUUIDForTest(pinnedSHA)
+
+	for _, version := range versions {
+		t.Run(version, func(t *testing.T) {
+			t.Parallel()
+
+			bufPath := testutil.GetBuf(t, version)
+			srv := testutil.StartServer(t, cfg)
+
+			exitCode, stderr, generated := testutil.RunBufGenerateWithPinnedLock(t, bufPath, srv.Port, pinnedUUID)
+			if exitCode != 0 {
+				t.Fatalf("buf generate failed for %s (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
+					version, exitCode, srv.Output.String(), stderr)
+			}
+			if len(generated) == 0 {
+				t.Fatalf("buf generate produced no files for %s.\nServer output:\n%s",
+					version, srv.Output.String())
+			}
+
+			// Content sanity: every generated file is non-empty and carries the
+			// expected package marker.
+			for _, f := range generated {
+				info, err := os.Stat(f)
+				require.NoError(t, err, "generated file %s not found", f)
+				require.NotZero(t, info.Size(), "generated file %s is empty", f)
+				content, err := os.ReadFile(f)
+				require.NoError(t, err, "reading generated file %s", f)
+				if !strings.Contains(string(content), "package google.type") {
+					t.Fatalf("generated file %s does not contain 'package google.type'", f)
+				}
+			}
+
+			// The decisive not-HEAD assertion: the proxy's server log must
+			// contain the PINNED commit's real git SHA. This SHA only appears
+			// if ServeGraph's UUID-resolution branch (cidSha hit or
+			// commitUUIDInverse 28-hex prefix probe) successfully resolved
+			// the pinned cid. In the bug state (cid forwarded upstream 422,
+			// or infoCache serving HEAD), the pinned SHA never appears in the
+			// log — only HEAD's SHA does, or the request fails outright.
+			srvOut := srv.Output.String()
+			if !strings.Contains(srvOut, pinnedSHA) {
+				t.Errorf("proxy did not serve the pinned commit %s (%s).\n"+
+					"Server log does not contain the pinned SHA %q.\n"+
+					"This means the cid->sha resolution (Phase 24) did not fire — "+
+					"the proxy either forwarded the cid upstream (422) or served HEAD.\n"+
+					"Server output:\n%s",
+					generatePinnedRef, pinnedUUID, pinnedSHA, srvOut)
+			}
+			// And the log must reference the pinned cid (the buf.lock value)
+			// alongside the SHA — confirming the cid was the input to the
+			// resolution, not an accident.
+			if !strings.Contains(srvOut, pinnedUUID) {
+				t.Errorf("proxy log does not reference the pinned cid %q at all.\n"+
+					"Server output:\n%s", pinnedUUID, srvOut)
 			}
 		})
 	}
