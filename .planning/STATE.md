@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
-status: "Phase 23 complete (local) — ref-shape e2e coverage closed"
-last_updated: "2026-07-09T00:00:00.000Z"
-last_activity: 2026-07-09
+status: executing
+last_updated: "2026-07-09T14:50:54.595Z"
+last_activity: 2026-07-09 -- Phase 24 execution started
 progress:
   total_phases: 13
   completed_phases: 12
   total_plans: 16
-  completed_plans: 16
-  percent: 94
+  completed_plans: 15
+  percent: 92
 ---
 
 # Project State
@@ -21,14 +21,14 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
 
-**Current focus:** Phase 23 complete; ref-shape e2e coverage closed (tag + branch-name + raw-SHA-off-default-branch)
+**Current focus:** Phase 24 — resolve-buf-cid-ref-in-servegraph-honor-pinned-commit
 
 ## Current Position
 
-Phase: 23
-Plan: 23-01 complete
-Status: Phase 23 complete (local) — commit 8cf99fa (test) + docs commit (plan/research/summary)
-Last activity: 2026-07-09
+Phase: 24 (resolve-buf-cid-ref-in-servegraph-honor-pinned-commit) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 24
+Last activity: 2026-07-09 -- Phase 24 execution started
 
 Progress: [█████████░] 94%
 
@@ -88,6 +88,7 @@ None yet.
 - Phase 22 proposed: Fix the v1.30.1 v1alpha1 read-path to apply `commitUUIDInverse` on 32-char buf-issued UUIDs in the `DownloadManifestAndBlobs` handler chain, then re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass. This is the same class of bug Phase 18 fixed for the v1beta1 path; Phase 19/20 e2e tests only exercised the v1beta1 path.
 - Phase 22 added: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works. Depends on Phase 21. Scope: (1) apply `commitUUIDInverse` in the v1alpha1 `DownloadManifestAndBlobs` handler chain so 32-char buf UUIDs resolve to git SHAs before hitting GitHub's tree API; (2) re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass; (3) broader verification that the v1 (v1alpha1) protocol path works end-to-end (not just `buf generate` — also `buf mod update` and the existing smoke test that Phase 19 revealed was broken for v1.30.1). See `.planning/phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/`.
 - Phase 23 added: e2e tests for branch-name and non-default-branch commit refs in buf.yaml deps. Closes the ref-shape coverage gap from Phase 19 (which covered tag refs only). Two v1.69.0 tests: `TestRefRespected_BranchName_PinsBranchTip` (gh-pages branch ref → `repos.GetCommit` fall-through pins branch tip) and `TestRefRespected_NonDefaultBranchCommitSHA` (raw 40-char SHA of a gh-pages commit → `isSHA` fast path stamps it branch-agnostically). Both behaviors already shipped in Phase 18 — test-only phase. Test code in `8cf99fa`; docs in separate commit. See `.planning/phases/23-e2e-tests-branch-name-and-non-default-branch-commit-refs-in-buf-yaml-deps/`.
+- Phase 24 added: Resolve buf cid ref in ServeGraph; honor pinned commit. Prod `buf generate` failed for grpc-ecosystem/grpc-gateway pinned in buf.lock at `e91b8a68fe214081808d79f1a1a4f09e` — ServeGraph forwarded the 32-hex cid to GitHub (422→502) and infoCache keyed by owner/module served HEAD for the pinned cid. Diagnosis + two RED confirming tests in `.planning/debug/buf-cid-ref-forwarded-to-upstream.md`. Fix: cid→sha map at every mint site, ServeGraph UUID-resolution branch (commitUUIDInverse + 28-hex prefix probe, ported from Phase 18), infoCache cid-gating, ServeDownload cid→sha preference. See `.planning/phases/24-resolve-buf-cid-ref-in-servegraph-honor-pinned-commit/`.
 
 ## Deferred Items
 

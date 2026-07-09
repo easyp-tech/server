@@ -238,6 +238,16 @@ Plans:
 
 - [ ] [22-01](./phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/22-01-PLAN.md) — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution (CommitResolver interface + resolveCommitForRead wrapper + isUUID branch in blobs.go) with TDD unit cover for PR-22-1/2/3 and the Phase 21 e2e gate for PR-22-4
 
+### Phase 24: Resolve buf cid ref in ServeGraph; honor pinned commit
+
+**Goal:** When a client sends a proxy-minted 32-hex buf commit_id as `Name.ref` (the normal buf.lock state), ServeGraph must resolve it to the real git SHA and return the pinned commit — never forward the cid to the upstream (422/502) and never serve a differently-cached commit (HEAD). Ports the Phase 18 commitUUIDInverse+prefix technique into ServeGraph, adds a cid→full-sha map populated at every mint site, gates infoCache hits on cid match, and makes ServeDownload's foreign-cid path prefer cid→sha over the owner/module infoCache.
+**Requirements**: PR-24-1..6 (see 24-01-PLAN.md)
+**Depends on:** Phase 22 (shares the UUID-resolution helper lineage)
+**Plans:** 0/1 plans complete
+Plans:
+
+- [ ] [24-01](./phases/24-resolve-buf-cid-ref-in-servegraph-honor-pinned-commit/24-01-PLAN.md) — cid→sha map + ServeGraph UUID branch + infoCache cid-gating + ServeDownload cid→sha preference; turn the two RED confirming tests GREEN and extend the Phase 21 e2e gate to assert pinned-commit (not HEAD) content
+
 ---
 
-*Roadmap last updated: 2026-07-08*
+*Roadmap last updated: 2026-07-09*
