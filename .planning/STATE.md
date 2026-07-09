@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
-status: "Phase 22 shipped — PR #39"
-last_updated: "2026-07-08T13:36:01.102Z"
-last_activity: 2026-07-08
+status: "Phase 23 complete (local) — ref-shape e2e coverage closed"
+last_updated: "2026-07-09T00:00:00.000Z"
+last_activity: 2026-07-09
 progress:
-  total_phases: 12
-  completed_phases: 11
-  total_plans: 15
-  completed_plans: 15
-  percent: 92
+  total_phases: 13
+  completed_phases: 12
+  total_plans: 16
+  completed_plans: 16
+  percent: 94
 ---
 
 # Project State
@@ -21,16 +21,16 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 **Core value:** The proxy must correctly serve both old (v1.30.1) and modern (v1.69.0+) Buf CLI clients simultaneously
 
-**Current focus:** Milestone complete
+**Current focus:** Phase 23 complete; ref-shape e2e coverage closed (tag + branch-name + raw-SHA-off-default-branch)
 
 ## Current Position
 
-Phase: 22
-Plan: Not started
-Status: Phase 22 shipped — PR #39
-Last activity: 2026-07-08
+Phase: 23
+Plan: 23-01 complete
+Status: Phase 23 complete (local) — commit 8cf99fa (test) + docs commit (plan/research/summary)
+Last activity: 2026-07-09
 
-Progress: [██████████] 100%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -87,6 +87,7 @@ None yet.
 - Phase 21 executed: `TestGenerateWithPinnedBufLock` committed in `8df1f54 test(21-01): add TestGenerateWithPinnedBufLock matrix test`. With `EASYP_GH_TOKEN` set, the test caught two issues: (a) a deprecated `remote:` field in the plan's buf.gen.yaml — fixed in `e0c79b1 fix(21-01): use 'plugin:' not 'remote:' in generated buf.gen.yaml` (the alpha-remote-generation API was removed in v1.69.0+ and is deprecated in v1.30.1); (b) a real proxy regression in the v1.30.1 v1alpha1 `DownloadManifestAndBlobs` read-path: the proxy passes 32-char buf UUIDs directly to GitHub's `/git/trees/<id>` API which 404s, because the v1alpha1 `Download` chain does not apply `commitUUIDInverse` (only the v1beta1 path from Phase 18 does). The v1.69.0 subtest hits a persistent TLS handshake timeout fetching HEAD's tree from `raw.githubusercontent.com` (and is not actually testing the pinned-UUID path — the v1.69.0 client ignores the `buf.lock` for `buf generate` and just asks the proxy for HEAD). The v1.30.1 fix is deferred to a follow-up phase (proposed `22-fix-v1alpha1-download-uuid-handling`); the v1.69.0 subtest redesign is deferred to another follow-up.
 - Phase 22 proposed: Fix the v1.30.1 v1alpha1 read-path to apply `commitUUIDInverse` on 32-char buf-issued UUIDs in the `DownloadManifestAndBlobs` handler chain, then re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass. This is the same class of bug Phase 18 fixed for the v1beta1 path; Phase 19/20 e2e tests only exercised the v1beta1 path.
 - Phase 22 added: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works. Depends on Phase 21. Scope: (1) apply `commitUUIDInverse` in the v1alpha1 `DownloadManifestAndBlobs` handler chain so 32-char buf UUIDs resolve to git SHAs before hitting GitHub's tree API; (2) re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass; (3) broader verification that the v1 (v1alpha1) protocol path works end-to-end (not just `buf generate` — also `buf mod update` and the existing smoke test that Phase 19 revealed was broken for v1.30.1). See `.planning/phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/`.
+- Phase 23 added: e2e tests for branch-name and non-default-branch commit refs in buf.yaml deps. Closes the ref-shape coverage gap from Phase 19 (which covered tag refs only). Two v1.69.0 tests: `TestRefRespected_BranchName_PinsBranchTip` (gh-pages branch ref → `repos.GetCommit` fall-through pins branch tip) and `TestRefRespected_NonDefaultBranchCommitSHA` (raw 40-char SHA of a gh-pages commit → `isSHA` fast path stamps it branch-agnostically). Both behaviors already shipped in Phase 18 — test-only phase. Test code in `8cf99fa`; docs in separate commit. See `.planning/phases/23-e2e-tests-branch-name-and-non-default-branch-commit-refs-in-buf-yaml-deps/`.
 
 ## Deferred Items
 
@@ -100,6 +101,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-07-08T10:47:11Z
-Stopped at: Phase 21 executed (5 commits: tasks 1-2 + initial summary + buf.gen.yaml fix + live-test findings update). Status: verifying. Live test with EASYP_GH_TOKEN caught a real proxy regression in v1.30.1 v1alpha1 read-path (UUID passed to GitHub tree API without commitUUIDInverse). Proposed follow-up Phase 22 to fix the v1alpha1 Download chain. Phase 22 not yet added to ROADMAP.
-Resume file: `.planning/phases/21-we-need-another-e2e-test-we-are-doing-buf-generate-with-buf-/21-01-SUMMARY.md`
+Last session: 2026-07-09
+Stopped at: Phase 23 complete (local). Commit 8cf99fa ships the two tests; a separate docs commit lands RESEARCH/PLAN/SUMMARY. STATE.md + PROJECT.md evolved to reflect P23. Ref-shape e2e coverage now complete: tag (P19) + branch name (P23-T1) + raw SHA off default branch (P23-T2). No PR opened. Live run of the new tests (with EASYP_GH_TOKEN + cached buf binaries) still pending — would definitively answer whether the buf CLI accepts a raw 40-char SHA as a `:ref` suffix.
+Resume file: `.planning/phases/23-e2e-tests-branch-name-and-non-default-branch-commit-refs-in-buf-yaml-deps/23-01-SUMMARY.md`
