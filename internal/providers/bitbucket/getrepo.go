@@ -9,47 +9,6 @@ import (
 	"github.com/easyp-tech/server/internal/providers/content"
 )
 
-// isSHA reports whether s is a 40-char (SHA-1) or 64-char (SHA-256)
-// lowercase hex string. Mirrors the connect-package isSHA used by
-// probeCommitID; duplicated here so the provider's commit-vs-ref gate
-// does not require exporting a connect-package helper.
-func isSHA(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
-		return false
-	}
-	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
-
-// isConventionalDefaultName reports whether s is a well-known default
-// branch or label name. Used by the getMeta carve-out to handle the
-// v1.30.1 v1alpha1 case where the buf CLI sends the buf default label
-// name as the reference, even when it doesn't match the repo's actual
-// default branch name (e.g., googleapis/googleapis has default branch
-// "master" but the buf default label is "main", so the v1.30.1 client
-// sends reference="main" via modulepins.go:46). The set covers the
-// conventional default names in use across the git ecosystem since
-// ~2010: "main" (modern), "master" (legacy), "develop" (git-flow),
-// "trunk" (subversion-style). Returning HEAD for any of these is a
-// reasonable heuristic for the v1.30.1 case (the client wants the
-// default label's HEAD; the proxy doesn't have label resolution, so
-// the default branch's HEAD is the best approximation). The risk —
-// a repo with a non-conventional default (e.g., "production") and a
-// branch named "main" — returns HEAD instead of the branch's commit,
-// but this is the pre-Phase-18 behavior and the v1.30.1 case is the
-// common one.
-func isConventionalDefaultName(s string) bool {
-	switch s {
-	case "main", "master", "develop", "trunk":
-		return true
-	}
-	return false
-}
-
 func (c client) getMeta(ctx context.Context, commit string) (content.Meta, error) {
 	meta, err := c.getRepo(ctx)
 	if err != nil {
@@ -57,34 +16,30 @@ func (c client) getMeta(ctx context.Context, commit string) (content.Meta, error
 	}
 
 	// Four branches:
-	//   - commit == "":        no ref was supplied; keep HEAD from getRepo.
-	//   - commit == DefaultBranch || isConventionalDefaultName(commit):
-	//                          client asked for a well-known default-
-	//                          branch/label name (the v1.30.1 v1alpha1
-	//                          case: client sends reference="main" even
-	//                          when the repo's default is "master");
-	//                          keep HEAD from getRepo, no /commits/ call.
-	//   - isSHA(commit):       raw SHA fast path (40/64 lowercase hex).
-	//   - non-SHA non-empty:   treat as a ref and resolve via the
-	//                          provider's commit-fetch API. The previous
-	//                          `commit != "main"` carve-out silently stamped
-	//                          the ref into meta.Commit without resolving,
-	//                          which both ignored refs and broke
-	//                          40/64-char SHAs that weren't at HEAD.
+	//   - commit == "":              no ref was supplied; keep HEAD from getRepo.
+	//   - commit == DefaultBranch || content.IsConventionalDefaultName(commit):
+	//                              client asked for the default branch by name,
+	//                              or the v1.30.1 v1alpha1 path sent a well-known
+	//                              default label (main/master/develop/trunk);
+	//                              meta.Commit already holds HEAD.
+	//   - content.IsSHA(commit):     raw SHA fast path (40/64 lowercase hex).
+	//   - non-SHA non-empty:         treat as a ref and resolve via the provider's
+	//                                /commits endpoint (accepts ref names, short
+	//                                SHAs >= 7 chars, and full SHAs).
+	//
+	// Note: The isConventionalDefaultName carve-out was extracted to
+	// internal/providers/content/helpers.go in Phase 25 but the condition
+	// was RETAINED because the v1alpha1 ResolveService handler (modulepins.go:
+	// GetModulePins) is NOT gated by parseResourceRefName and still passes
+	// label_name="main" (proto field 3) as commit="main" to getMeta. Only the
+	// v1beta1 CommitService path is guarded by parseResourceRefName (Phase 18).
+	// If the v1alpha1 ResolveService path is also updated to ignore label_name,
+	// this carve-out can be removed.
 	if commit != "" {
-		if commit == meta.DefaultBranch || isConventionalDefaultName(commit) {
-			// Client asked for the default branch (or a well-known
-			// default-name like "main" / "master" / "develop" /
-			// "trunk") by name. meta.Commit already holds the default
-			// branch's HEAD SHA (set by getRepo from
-			// repo.LatestCommit), so we can return without a second
-			// round-trip. Without this carve-out, c.getCommit(ctx,
-			// "main") hits Bitbucket's /commits/main endpoint, which
-			// expects a SHA and rejects branch names with 404 (this is
-			// the v1.30.1 v1alpha1 path: the client sends
-			// reference="main" via modulepins.go:46, even when the
-			// repo's default branch is "master").
-		} else if isSHA(commit) {
+		if commit == meta.DefaultBranch || content.IsConventionalDefaultName(commit) {
+			// Client asked for the default branch by name; meta.Commit already
+			// holds HEAD (set by getRepo from repo.LatestCommit).
+		} else if content.IsSHA(commit) {
 			meta.Commit = commit
 		} else {
 			resolved, err := c.getCommit(ctx, commit)

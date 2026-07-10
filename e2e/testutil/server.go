@@ -17,6 +17,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// CommitLineRE matches the "commit: <value>" line in either buf.lock
+// format. v1 and v2 use the same field name (just under different
+// parent keys: `remote/owner/repository` vs `name`), so a single regex
+// covers both. The pinned value is a buf-issued 32-char dashless UUID.
+// Defined in testutil (not duplicated in e2e/ref_test.go) per Phase 25
+// FIX-06 (PR #39 post-merge review finding).
+var CommitLineRE = regexp.MustCompile(`(?m)^[ \t]+commit:[ \t]+(\S+)\s*$`)
+
+// ExtractCommitFromLock returns the first "commit:" value in buf.lock,
+// or an error if no such line is present. Used by e2e tests to assert
+// the proxy pinned to the expected commit.
+func ExtractCommitFromLock(lockContent []byte) (string, error) {
+	m := CommitLineRE.FindSubmatch(lockContent)
+	if m == nil {
+		return "", fmt.Errorf("no commit: line found in buf.lock")
+	}
+	return string(m[1]), nil
+}
+
 // ServerResult holds the result of starting a test proxy server.
 type ServerResult struct {
 	// Port is the allocated TCP port number the server is listening on.
@@ -275,15 +294,14 @@ plugins:
 	}
 
 	// Step 2: read buf.lock, extract the original commit, overwrite it
-	// with the pinned UUID. extractCommitFromLock lives in package e2e
-	// (e2e/ref_test.go), so we duplicate the regex inline here (the
-	// testutil package cannot import the e2e package).
+	// with the pinned UUID. ExtractCommitFromLock is in the testutil
+	// package (defined above), so we call it directly rather than
+	// duplicating the regex.
 	lockPath := filepath.Join(tmpDir, "buf.lock")
 	lockContent, err := os.ReadFile(lockPath)
 	require.NoError(t, err, "reading buf.lock")
 
-	commitLineRE := regexp.MustCompile(`(?m)^[ \t]+commit:[ \t]+(\S+)\s*$`)
-	m := commitLineRE.FindSubmatch(lockContent)
+	m := CommitLineRE.FindSubmatch(lockContent)
 	require.NotNil(t, m, "no commit: line found in buf.lock:\n%s", lockContent)
 	originalCommit := string(m[1])
 

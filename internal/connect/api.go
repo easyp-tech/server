@@ -53,7 +53,22 @@ type api struct {
 	v1alpha1connect.UnimplementedDownloadServiceHandler
 	repo           provider
 	domain         string
-	commitResolver CommitResolver // assigned in NewWithConfig; nil-guarded at call sites
+	commitResolver CommitResolver // assigned by initCommitResolver in NewWithConfig; nil-guarded at call sites
+}
+
+// initCommitResolver assigns the CommitResolver and panics at startup if
+// the resolver is nil. This turns a future constructor that forgets to wire
+// commitResolver into a loud startup failure instead of a silent degradation
+// (the nil-guard at blobs.go:33 would catch it at request time, but "request
+// returns error resolving commit uuid" is harder to diagnose than a panic
+// during server startup tests).
+func (a *api) initCommitResolver(r CommitResolver) {
+	if r == nil {
+		panic("internal/connect/api.go: commitResolver not configured — " +
+			"use NewWithConfig, not New directly, and ensure the " +
+			"commitServiceHandler is wired before handler registration")
+	}
+	a.commitResolver = r
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -108,6 +123,7 @@ func NewWithConfig(
 		commitMap:       make(map[string]moduleRef),
 		infoCache:       make(map[string]commitInfoCache),
 		filesMap:        make(map[string][]content.File),
+		cidSha:          make(map[string]string),
 		knownOwners:     knownOwners,
 		singleModule:    singleModule,
 		missCache:       make(map[string]time.Time),
@@ -120,7 +136,7 @@ func NewWithConfig(
 	// (DownloadManifestAndBlobs) can resolve UUIDs through the Phase 18 ladder.
 	// Safe post-construction mutation: NewWithConfig runs single-threaded at
 	// startup and all handler invocations happen after this function returns.
-	a.commitResolver = commitHandler
+	a.initCommitResolver(commitHandler)
 	if commitHandler.probeEnabled && commitHandler.probeNegativeTTL > 0 {
 		go commitHandler.sweepMisses(context.Background())
 	}

@@ -44,6 +44,11 @@
 - [x] **Phase 18: Respect buf.yaml dependency refs** — Honor `Name.ref` end-to-end + isSHA-gated provider ref-resolution + prewarm removal with `commitUUIDInverse`-based probe (completed 2026-07-07)
 - [x] **Phase 19: e2e tests for ref-honoring in buf.yaml deps** — Three `TestRefRespected_*` tests that exercise the proxy's ref-honoring behavior end-to-end via a real buf CLI + real GitHub API; tests pass with `EASYP_GH_TOKEN` set, skip cleanly otherwise (completed 2026-07-07)
 - [ ] **Phase 20: Fix ref-honoring regressions discovered in Phase 19** — Restore the no-ref (HEAD) path that Phase 18 broke for buf v1.30.1, and fix the v1beta1 path where the ref is being ignored on `buf dep update`
+- [x] **Phase 21: e2e test for buf generate with pinned buf.lock** — Add `TestGenerateWithPinnedBufLock` matrix test that proves proxy can serve content for a pre-existing pinned commit (completed 2026-07-08)
+- [x] **Phase 22: Fix v1.30.1 v1alpha1 read-path UUID handling** — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution machinery (completed 2026-07-09)
+- [x] **Phase 23: e2e tests for branch-name and non-default-branch commit refs** — Add branch-name and raw-SHA ref coverage for buf.yaml deps (completed 2026-07-09)
+- [x] **Phase 24: Resolve buf cid ref in ServeGraph; honor pinned commit** — cid→sha map + ServeGraph UUID branch + infoCache cid-gating + ServeDownload cid→sha preference (completed 2026-07-09)
+- [x] **Phase 25: Address PR #39 post-merge review findings** — Fix 7 post-merge findings: extract duplicated helpers and regex, retain carve-out via shared helper, fix error wrap strings, verify v1alpha1 e2e, harden commitResolver construction (completed 2026-07-10)
 
 ## Phase Details
 
@@ -160,11 +165,11 @@ Plans:
 | 3. Test Infrastructure        | v1.1 | 2/2 | Complete | 2026-05-07 |
 | 4. Old Protocol Validation    | v1.1 | 1/1 | Complete | 2026-05-07 |
 | 5. New Protocol Validation    | v1.1 | 2/2 | Complete | 2026-05-07 |
-| 6. Dependency Upgrades        | v1.2 | 2/2 | Complete | 2026-05-08 |
-| 7. Proto Regeneration         | v1.2 | 2/2 | Complete | 2026-05-08 |
-| 8. Go Code Modernization      | v1.2 | 1/1 | Complete | 2026-05-08 |
-| 9. Submodule Cleanup          | v1.2 | 1/1 | Complete | 2026-05-09 |
-| 10. Code Quality Fixes        | v1.2 | 4/4 | Complete | 2026-05-09 |
+| 6. Dependency Upgrades        | v1.1 | 2/2 | Complete | 2026-05-08 |
+| 7. Proto Regeneration         | v1.1 | 2/2 | Complete | 2026-05-08 |
+| 8. Go Code Modernization      | v1.1 | 1/1 | Complete | 2026-05-08 |
+| 9. Submodule Cleanup          | v1.1 | 1/1 | Complete | 2026-05-09 |
+| 10. Code Quality Fixes        | v1.1 | 4/4 | Complete | 2026-05-09 |
 | 11. Logging Foundation        | v1.3 | 0/0 | Not started | - |
 | 12. Logging Infrastructure    | v1.3 | 0/0 | Not started | - |
 | 13. Error Path Logging        | v1.3 | 0/0 | Not started | - |
@@ -238,6 +243,28 @@ Plans:
 
 - [ ] [22-01](./phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/22-01-PLAN.md) — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution (CommitResolver interface + resolveCommitForRead wrapper + isUUID branch in blobs.go) with TDD unit cover for PR-22-1/2/3 and the Phase 21 e2e gate for PR-22-4
 
+### Phase 24: Resolve buf cid ref in ServeGraph; honor pinned commit
+
+**Goal:** When a client sends a proxy-minted 32-hex buf commit_id as `Name.ref` (the normal buf.lock state), ServeGraph must resolve it to the real git SHA and return the pinned commit — never forward the cid to the upstream (422/502) and never serve a differently-cached commit (HEAD). Ports the Phase 18 commitUUIDInverse+prefix technique into ServeGraph, adds a cid→full-sha map populated at every mint site, gates infoCache hits on cid match, and makes ServeDownload's foreign-cid path prefer cid→sha over the owner/module infoCache.
+**Requirements**: PR-24-1..6 (see 24-01-PLAN.md)
+**Depends on:** Phase 22 (shares the UUID-resolution helper lineage)
+**Plans:** 1/1 plans complete
+Plans:
+
+- [ ] [24-01](./phases/24-resolve-buf-cid-ref-in-servegraph-honor-pinned-commit/24-01-PLAN.md) — cid→sha map + ServeGraph UUID branch + infoCache cid-gating + ServeDownload cid→sha preference; turn the two RED confirming tests GREEN and extend the Phase 21 e2e gate to assert pinned-commit (not HEAD) content
+
+### Phase 25: Address PR #39 post-merge review findings: fix isConventionalDefaultName regression, fix misleading error wrap in blobs.go (GetRepository→GetFiles), verify v1alpha1 read-path against real GitHub (PR-22-4 live e2e), extract duplicated isSHA to shared provider package, fix dangling proto path in commits_helpers_test.go, eliminate commitLineRE duplication between e2e and testutil, make commitResolver construction-time safer
+
+**Goal:** All 7 post-merge review findings from PR #39 are fixed: no behavioral regression for repos with non-default branches named "main"/"master"/"develop"/"trunk"; duplicated helpers and regex are consolidated; error strings, comments, and construction-time safety are hardened; v1alpha1 e2e gate passes against real GitHub
+**Requirements**: FIX-01, FIX-02, FIX-03, FIX-04, FIX-05, FIX-06, FIX-07
+**Depends on:** Phase 24
+**Plans:** 3 plans
+Plans:
+
+- [ ] [25-01](./phases/25-address-pr-39-post-merge-review-findings-pin-multi-default-b/25-01-PLAN.md) — Remove isConventionalDefaultName carve-out from both providers (FIX-01) + extract isSHA to internal/providers/content (FIX-04)
+- [ ] [25-02](./phases/25-address-pr-39-post-merge-review-findings-pin-multi-default-b/25-02-PLAN.md) — Fix error wrap string in blobs.go (FIX-02), fix dangling proto path in test comment (FIX-05), add initCommitResolver panic guard to api.go (FIX-07)
+- [ ] [25-03](./phases/25-address-pr-39-post-merge-review-findings-pin-multi-default-b/25-03-PLAN.md) — Extract commitLineRE/ExtractCommitFromLock to testutil (FIX-06); human-verify v1alpha1 e2e gate against real GitHub (FIX-03)
+
 ---
 
-*Roadmap last updated: 2026-07-08*
+*Roadmap last updated: 2026-07-10*

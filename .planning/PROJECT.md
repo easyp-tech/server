@@ -86,7 +86,9 @@ This document evolves at phase transitions and milestone boundaries.
 
 ## Current State
 
+Phase 23 complete (2026-07-09, local) — two v1.69.0 e2e tests close the ref-shape coverage gap from Phase 19. `TestRefRespected_BranchName_PinsBranchTip` proves a branch-name ref (`gh-pages`) pins buf.lock to the branch tip via the `repos.GetCommit` fall-through; `TestRefRespected_NonDefaultBranchCommitSHA` proves a raw 40-char SHA of a commit off the default branch is honored via the `isSHA` fast path. Both behaviors shipped in Phase 18; this phase is test-only (commit `8cf99fa` + docs commit). Ref-shape e2e coverage now spans tag (P19), branch name (P23-T1), and raw SHA off-default-branch (P23-T2). Tests skip cleanly token-less; live run pending `EASYP_GH_TOKEN` + cached buf binaries.
+
 Phase 22 complete (2026-07-08) — v1.30.1 v1alpha1 read-path now resolves 32-char buf UUIDs to 40-char git SHAs via the Phase 18 probe ladder before provider GetFiles calls. PR-22-1/2/3/5 unit-verified. PR-22-4 live e2e (TestGenerateWithPinnedBufLock/v1.30.1) blocked by provider-transport TLS issue to raw.githubusercontent.com (handler fix independently proven) — tracked in 22-HUMAN-UAT.md. Code review (22-REVIEW.md) flagged CR-01 stale-digest + 6 warnings as future-hardening candidates.
 
 ---
-*Last updated: 2026-07-08 after Phase 22 completion (v1.30.1 v1alpha1 read-path UUID resolution)*
+*Last updated: 2026-07-09 after Phase 23 completion (branch-name + non-default-branch commit ref e2e tests)*

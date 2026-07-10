@@ -29,6 +29,16 @@ type commitInfoCache struct {
 	ownerID  string
 	moduleID string
 	digest   []byte
+	// cidPinned is true when this entry was minted for a request whose
+	// Name.ref was a buf-issued 32-hex cid (the normal buf.lock state).
+	// infoCache is keyed by owner/module only, so without this flag a
+	// pinned-cid writeback would silently poison every subsequent HEAD /
+	// SHA / tag request on the same module (WR-01): the cid-gate can't
+	// tell the entry apart from a HEAD-minted one, because commitID is
+	// always a cid (the output of commitUUID). cidPinned records the
+	// request shape that produced the entry so the gate can force a
+	// re-resolve when a non-pinned request lands on a pinned entry.
+	cidPinned bool
 }
 
 type commitServiceHandler struct {
@@ -38,6 +48,15 @@ type commitServiceHandler struct {
 	commitMap map[string]moduleRef       // commitID → owner/module
 	infoCache map[string]commitInfoCache // "owner/module" → cached commit info
 	filesMap  map[string][]content.File  // commitID → cached files
+	// cidSha remembers the full 40-/64-char git SHA a buf-issued 32-hex
+	// commit_id was minted from. Populated at every mint site (GetCommits,
+	// ServeGraph writeback, ServeDownload mint, registerResolvedAlias). The
+	// map is the source of truth ServeGraph and ServeDownload consult before
+	// touching upstream when a request pins a dependency via its cid (the
+	// normal buf.lock state) — without it the proxy cannot recover the real
+	// SHA (commitUUID is intentionally lossy) and would either forward the
+	// cid to the upstream (422) or serve a differently-cached commit (HEAD).
+	cidSha map[string]string // cid (32-hex) → full git sha (40/64-hex)
 	// knownOwners is a deterministic-id → owner-name lookup populated
 	// at startup from the configured repositories. Used by the
 	// buf.registry.owner.v1.OwnerService/GetOwners handler to answer
@@ -221,12 +240,14 @@ func (h *commitServiceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		})
 		h.commitMu.Lock()
 		h.commitMap[cid] = ref
+		h.cidSha[cid] = meta.Commit
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
-			commitID: cid,
-			commit:   meta.Commit,
-			ownerID:  ref.owner,
-			moduleID: ref.owner + "/" + ref.module,
-			digest:   digest,
+			commitID:  cid,
+			commit:    meta.Commit,
+			ownerID:   ref.owner,
+			moduleID:  ref.owner + "/" + ref.module,
+			digest:    digest,
+			cidPinned: isUUID(ref.ref),
 		}
 		h.commitMu.Unlock()
 	}
@@ -311,7 +332,17 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		h.commitMu.RLock()
 		cached, ok := h.infoCache[key]
 		h.commitMu.RUnlock()
-		if ok {
+		// infoCache is keyed by owner/module only, so the cid-gate must be
+		// SYMMETRIC (WR-01):
+		//   - A cid-pinned request must only hit an entry minted for the SAME
+		//     cid (a HEAD/tag/SHA-minted entry has a different commitID).
+		//   - A non-pinned request (HEAD/SHA/tag, i.e. ref.ref is not a cid)
+		//     must only hit an entry that was itself minted by a non-pinned
+		//     request. Without this reverse check, a single pinned-cid
+		//     writeback would stick every subsequent HEAD request on that
+		//     module to the pinned commit until restart.
+		requestIsUUID := isUUID(ref.ref)
+		if ok && ((!requestIsUUID && !cached.cidPinned) || (requestIsUUID && cached.commitID == ref.ref)) {
 			h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
 				slog.String("handler", "ServeGraph"),
 				slog.String("procedure", "GraphService/GetGraph"),
@@ -341,7 +372,42 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 			slog.String("module", ref.module),
 			slog.String("repo", ref.module),
 		)
-		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, ref.ref)
+		// UUID-resolution branch: when the client pinned a dependency via a
+		// buf-issued 32-hex cid (the standard buf.lock state), the raw cid
+		// MUST NOT be forwarded to GetMeta — GitHub rejects it with 422
+		// ("No commit found for SHA") because the real SHA is 40 hex and
+		// commitUUID is intentionally lossy. Resolve cid → full git SHA via
+		// the cidSha map (warm) or commitUUIDInverse + upstream prefix probe
+		// (cold), then proceed with the resolved SHA. Empty/branch/tag/SHA
+		// refs flow the existing path untouched.
+		fetchRef := ref.ref
+		if isUUID(ref.ref) {
+			resolved, ok := h.resolveUUIDRef(r.Context(), ref, ref.ref)
+			if ok {
+				fetchRef = resolved
+				h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+					slog.String("handler", "ServeGraph"),
+					slog.String("procedure", "GraphService/GetGraph"),
+					slog.String("branch", "uuid_ref_resolved"),
+					slog.String("owner", ref.owner),
+					slog.String("module", ref.module),
+					slog.String("repo", ref.module),
+					slog.String("commit_id", ref.ref),
+					slog.String("commit", resolved),
+				)
+			} else {
+				h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
+					slog.String("handler", "ServeGraph"),
+					slog.String("procedure", "GraphService/GetGraph"),
+					slog.String("branch", "uuid_ref_unresolved"),
+					slog.String("owner", ref.owner),
+					slog.String("module", ref.module),
+					slog.String("repo", ref.module),
+					slog.String("commit_id", ref.ref),
+				)
+			}
+		}
+		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, fetchRef)
 		if err != nil {
 			h.upstreamError(r, w, fmt.Sprintf("resolving %s/%s", ref.owner, ref.module),
 				slog.String("owner", ref.owner), slog.String("module", ref.module),
@@ -414,12 +480,14 @@ func (h *commitServiceHandler) ServeGraph(w http.ResponseWriter, r *http.Request
 		// "unknown commit id: re-resolve via buf mod update / buf dep update".
 		h.commitMu.Lock()
 		h.commitMap[cid] = ref
+		h.cidSha[cid] = meta.Commit
 		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
-			commitID: cid,
-			commit:   meta.Commit,
-			ownerID:  ref.owner,
-			moduleID: ref.owner + "/" + ref.module,
-			digest:   digest,
+			commitID:  cid,
+			commit:    meta.Commit,
+			ownerID:   ref.owner,
+			moduleID:  ref.owner + "/" + ref.module,
+			digest:    digest,
+			cidPinned: isUUID(ref.ref),
 		}
 		h.commitMu.Unlock()
 		h.hlog(r).LogAttrs(r.Context(), slog.LevelInfo, "handler decision",
@@ -621,7 +689,13 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 
 	var files []content.File
 	var digest []byte
-	if infoOK && len(cachedFiles) > 0 {
+	// Files-cache hit only counts when the cached entry is for the SAME cid
+	// the request pinned. infoCache is keyed by owner/module, so without
+	// this gate a pinned-cid request served after a HEAD request would
+	// return HEAD's files under the pinned cid ("no content returned for
+	// commit ID <pinned>"). When the cids differ, fall through to the
+	// fetch path which resolves the pinned cid via cidSha.
+	if infoOK && cached.commitID == commitID && len(cachedFiles) > 0 {
 		cid = cached.commitID
 		files = cachedFiles
 		digest = cached.digest
@@ -647,15 +721,20 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 			slog.String("commit_id", commitID),
 		)
 		// Fetch the content for the requested commit, not always HEAD.
-		// commit_id is a raw git sha (post 688f058): fetching by it returns
-		// the exact content the client asked for, including non-HEAD commits
-		// recovered via probeCommitID. A foreign-id alias
-		// (resolveForeignCommitID) is not a real sha, so GetMeta(commitID)
-		// fails and we fall back to the resolved HEAD commit (cached.commit)
-		// the alias was bound to — preserving prior single-module behavior.
+		// commitID is typically a buf-issued 32-hex cid (the value buf.lock
+		// pins), not a raw git sha — forwarding it to GetMeta fails upstream
+		// (422, "No commit found for SHA"). Resolve cid→sha via cidSha first;
+		// only when that misses do we fall back to the prior behavior of
+		// treating commitID as a raw sha and then to cached.commit (HEAD).
 		fetchCommit := commitID
+		if sha, ok := h.cidShaLookup(commitID); ok && sha != "" {
+			fetchCommit = sha
+		}
 		meta, err := h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, fetchCommit)
-		if err != nil && cached.commit != "" && cached.commit != commitID {
+		if err != nil && fetchCommit == commitID && cached.commit != "" && cached.commit != commitID {
+			// commitID was not a known cid; try the resolved HEAD commit the
+			// foreign-id alias was bound to (preserves prior single-module
+			// behavior for genuinely-foreign ids with no cidSha entry).
 			fetchCommit = cached.commit
 			meta, err = h.api.repo.GetMeta(r.Context(), ref.owner, ref.module, fetchCommit)
 		}
@@ -713,6 +792,26 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 				slog.Bool("is_v1", isV1),
 			)
 		}
+		// Write back the full resolution so the next identical pinned-cid
+		// Download hits the files-cache directly (WR-03). Without this, every
+		// repeat request re-ran cidShaLookup (hit) → GetMeta → GetFiles →
+		// re-compute digest, because the infoCache entry still held the stale
+		// pre-resolution state and filesMap[cid] was never populated. Mirror
+		// the ServeGraph writeback (and ServeHTTP's) so all three handlers
+		// converge on the same cached state.
+		h.commitMu.Lock()
+		h.commitMap[cid] = *ref
+		h.cidSha[cid] = meta.Commit
+		h.infoCache[ref.owner+"/"+ref.module] = commitInfoCache{
+			commitID:  cid,
+			commit:    meta.Commit,
+			ownerID:   ref.owner,
+			moduleID:  ref.owner + "/" + ref.module,
+			digest:    digest,
+			cidPinned: isUUID(commitID),
+		}
+		h.filesMap[cid] = files
+		h.commitMu.Unlock()
 	}
 
 	commit := buildCommitRaw(cid, cached.ownerID, cached.moduleID, digest)
@@ -901,6 +1000,124 @@ func (h *commitServiceHandler) resolveForeignCommitID(commitID string) *moduleRe
 	return nil
 }
 
+// cidShaLookup is the read-side of the cidSha map. Returns the full git SHA
+// the cid was minted from, plus ok=true. Caller must NOT hold commitMu.
+func (h *commitServiceHandler) cidShaLookup(cid string) (string, bool) {
+	h.commitMu.RLock()
+	sha, ok := h.cidSha[cid]
+	h.commitMu.RUnlock()
+	return sha, ok
+}
+
+// resolveUUIDRef recovers the full git SHA a buf-issued 32-hex cid was minted
+// from, so the caller can pass a real SHA to GetMeta instead of forwarding
+// the raw cid upstream (which GitHub rejects with 422 — commitUUID is
+// intentionally lossy and the cid is not a SHA prefix).
+//
+// Resolution ladder:
+//
+//  1. cidSha map hit — the cid was minted in-session (GetCommits, a prior
+//     ServeGraph writeback, ServeDownload, or probeCommitID). Zero round-trips.
+//  2. cidSha miss — recover the first 28 hex chars (14 bytes) of the
+//     original SHA via commitUUIDInverse (Phase 18 technique) and probe the
+//     upstream with the prefix. Real providers (GitHub, Bitbucket) resolve
+//     short-SHA prefixes via their commit-fetch API; the 28-hex prefix is
+//     well above both providers' minimum length. The returned meta.Commit
+//     MUST start with the recovered prefix — otherwise the source does not
+//     own this cid and the probe misses (prefix-match validation closes the
+//     wrong-source-alias risk, mirroring probeCommitID's contract).
+//
+// On hit the cid→sha mapping is cached so subsequent identical requests take
+// the zero-round-trip path. On any failure returns ("", false); the caller
+// falls through to the existing GetMeta path with the original ref (which
+// will still fail upstream, but no worse than before).
+//
+// Caller must NOT hold commitMu. ctx should be the request context.
+func (h *commitServiceHandler) resolveUUIDRef(ctx context.Context, ref moduleRef, cid string) (string, bool) {
+	if cid == "" {
+		return "", false
+	}
+
+	// (a) Warm map — the common path once a cid has been minted in-session.
+	if sha, ok := h.cidShaLookup(cid); ok && sha != "" {
+		return sha, true
+	}
+
+	// (b) Cold cache — recover the 28-hex SHA prefix and probe upstream.
+	//
+	// This probe has the same shape as probeCommitID's per-source GetMeta, so
+	// it MUST inherit the same four defenses (CR-01/WR-02): the probeSem cap
+	// on concurrent upstream probes, the missCache negative cache, the
+	// probeTimeout per-call bound, and the isTransientErr classification that
+	// keeps a brief upstream outage from permanently negative-caching a real
+	// cid. Without these an unauthenticated client flooding ServeGraph with
+	// distinct 32-hex cids causes one unbounded upstream GetMeta per request
+	// with no concurrency cap and no negative caching — exactly the
+	// amplification probeSem exists to prevent.
+	if h.missCached(cid) {
+		return "", false
+	}
+	// commitUUIDInverse recovers the first 28 hex chars (14 bytes) of the
+	// original SHA. The 2^112 collision space is large enough that at most
+	// one commit in any realistic repo starts with this prefix; the
+	// HasPrefix check below verifies the upstream's answer honors it.
+	// (IN-01: 2^112 uniqueness assumption, verified by probeCommitID's
+	// identical HasPrefix validation.)
+	prefix, err := commitUUIDInverse(cid)
+	if err != nil {
+		h.rememberMiss(cid)
+		return "", false
+	}
+	// Bound concurrent probes so a flood of distinct unknown cids cannot
+	// amplify to unbounded upstream load (mirrors probeCommitID's acquire).
+	// Non-blocking: if the cap is reached, decline and let the caller fall
+	// through — the client retries and hits the negative cache once a probe
+	// eventually runs.
+	if h.probeSem != nil {
+		select {
+		case h.probeSem <- struct{}{}:
+			defer func() { <-h.probeSem }()
+		default:
+			return "", false
+		}
+	}
+	// Per-call timeout: request contexts alone are an insufficient bound on
+	// upstream hangs (proxies behind proxies, idle-pinned connections).
+	// probeCommitID wraps every per-source GetMeta the same way (WR-02). A
+	// zero probeTimeout (enhancements disabled) means "use the request
+	// context as-is" — mirrors how the rest of ServeGraph behaves when the
+	// CommitResolution knobs are off.
+	pctx := ctx
+	if h.probeTimeout > 0 {
+		var cancel context.CancelFunc
+		pctx, cancel = context.WithTimeout(ctx, h.probeTimeout)
+		defer cancel()
+	}
+	meta, err := h.api.repo.GetMeta(pctx, ref.owner, ref.module, prefix)
+	if err != nil {
+		// Only negative-cache on a definitive not-found. A transient error
+		// (timeout/cancel/network) leaves the cid retryable so a brief
+		// upstream outage does not lock out a real cid for ProbeNegativeTTL.
+		if !isTransientErr(err) {
+			h.rememberMiss(cid)
+		}
+		return "", false
+	}
+	if meta.Commit == "" || !strings.HasPrefix(meta.Commit, prefix) {
+		// Prefix-match validation: the upstream resolved the prefix to a
+		// commit that does NOT start with the recovered prefix. The
+		// source does not own this cid — do not trust the answer.
+		h.rememberMiss(cid)
+		return "", false
+	}
+
+	// Cache so the next request for this cid takes the zero-round-trip path.
+	h.commitMu.Lock()
+	h.cidSha[cid] = meta.Commit
+	h.commitMu.Unlock()
+	return meta.Commit, true
+}
+
 // missCached reports whether sha was recently confirmed absent from every
 // configured source (within ProbeNegativeTTL). Caller must NOT hold commitMu.
 func (h *commitServiceHandler) missCached(sha string) bool {
@@ -1052,9 +1269,13 @@ func (h *commitServiceHandler) probeCommitID(ctx context.Context, id string) (*m
 	}
 
 	// If id is a buf-issued UUID, derive the SHA prefix and probe with the
-	// prefix. The 14-byte recovery is lossy but 2^112 — sufficient to
-	// identify a single source among the configured set. The prefix-match
-	// validation below rules out collisions.
+	// prefix. commitUUIDInverse recovers the first 14 bytes (28 hex) of the
+	// original SHA. The collision space is 2^112 — the implicit uniqueness
+	// invariant (IN-01) is that at most one commit in any realistic repo
+	// starts with those 28 hex chars, so a prefix match unambiguously
+	// identifies the source commit. The HasPrefix validation below verifies
+	// the upstream's answer honors the prefix, closing the wrong-source
+	// alias risk if a future provider ever returned a colliding commit.
 	probeArg := id
 	if isUUID(id) {
 		prefix, err := commitUUIDInverse(id)
@@ -1164,18 +1385,28 @@ func (h *commitServiceHandler) registerResolvedAlias(id, sha, owner, module stri
 	if sha != "" && sha != id {
 		h.commitMap[sha] = moduleRef{owner: owner, module: module}
 	}
+	// Remember the cid→sha mapping so a subsequent ServeGraph request that
+	// pins this cid short-circuits without re-probing. id is what the buf
+	// client sent (a buf-issued 32-hex UUID when this path was reached via
+	// probeCommitID); sha is the real 40-/64-hex git SHA the upstream
+	// returned. Guard against degenerate id==sha (raw-sha callers).
+	if isUUID(id) && sha != "" {
+		h.cidSha[id] = sha
+	}
 	if existing, ok := h.infoCache[key]; ok {
 		existing.commitID = id
 		existing.commit = sha
 		existing.ownerID = owner
 		existing.moduleID = key
+		existing.cidPinned = isUUID(id)
 		h.infoCache[key] = existing
 	} else {
 		h.infoCache[key] = commitInfoCache{
-			commitID: id,
-			commit:   sha,
-			ownerID:  owner,
-			moduleID: key,
+			commitID:  id,
+			commit:    sha,
+			ownerID:   owner,
+			moduleID:  key,
+			cidPinned: isUUID(id),
 		}
 	}
 	h.commitMu.Unlock()

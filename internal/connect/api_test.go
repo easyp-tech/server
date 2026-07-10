@@ -211,6 +211,575 @@ func buildV1GetGraphRequest(owner, module string) []byte {
 	return req
 }
 
+// buildV1GetGraphRequestWithRef builds a v1 GetGraph request whose Name carries
+// a ref (proto field 4) — the branch/tag/commit the client pinned. buf.lock
+// stores the proxy-minted 32-hex commit_id here, so ref is usually that id.
+func buildV1GetGraphRequestWithRef(owner, module, ref string) []byte {
+	var name []byte
+	name = protowire.AppendTag(name, 1, protowire.BytesType)
+	name = protowire.AppendString(name, owner)
+	name = protowire.AppendTag(name, 2, protowire.BytesType)
+	name = protowire.AppendString(name, module)
+	name = protowire.AppendTag(name, 4, protowire.BytesType)
+	name = protowire.AppendString(name, ref)
+
+	var resRef []byte
+	resRef = protowire.AppendTag(resRef, 2, protowire.BytesType)
+	resRef = append(resRef, protowire.AppendVarint(nil, uint64(len(name)))...)
+	resRef = append(resRef, name...)
+
+	var req []byte
+	req = protowire.AppendTag(req, 1, protowire.BytesType)
+	req = append(req, protowire.AppendVarint(nil, uint64(len(resRef)))...)
+	req = append(req, resRef...)
+	return req
+}
+
+// recordingProvider is a mockProvider that records every commit arg passed to
+// GetMeta, so tests can assert which ref the handler forwarded upstream.
+type recordingProvider struct {
+	meta    content.Meta
+	bySha   map[string]content.Meta
+	getMeta []string
+	// head, when set, is returned for an empty commit arg (HEAD). Real
+	// providers resolve HEAD to the default-branch tip; the mock cannot
+	// infer which bySha entry that is, so it must be told explicitly.
+	// Without this, the prefix-match loop would match every entry for ""
+	// (HasPrefix(x, "") is always true) and return a nondeterministic one.
+	head *content.Meta
+}
+
+func (r *recordingProvider) GetMeta(_ context.Context, _, _, commit string) (content.Meta, error) {
+	r.getMeta = append(r.getMeta, commit)
+	if commit == "" && r.head != nil {
+		return *r.head, nil
+	}
+	if m, ok := r.bySha[commit]; ok {
+		return m, nil
+	}
+	// Prefix match: real providers (GitHub via repos.GetCommit, Bitbucket
+	// via its commit-fetch API) resolve short-SHA prefixes (>=7 hex) to the
+	// full SHA. The mock must mirror that so ServeGraph's
+	// commitUUIDInverse→28-hex-prefix probe path can be exercised end-to-end
+	// against this fixture. Without it the mock would reject the 28-hex
+	// prefix that resolveUUIDRef derives from a buf-issued 32-hex cid.
+	// Only fire for non-empty args: HasPrefix(x, "") is always true, so an
+	// empty commit must be handled by the head branch above (or miss).
+	if commit != "" {
+		for fullSHA, m := range r.bySha {
+			if strings.HasPrefix(fullSHA, commit) {
+				return m, nil
+			}
+		}
+	}
+	return content.Meta{}, fmt.Errorf("mock: upstream has no commit %q", commit)
+}
+
+func (r *recordingProvider) GetFiles(_ context.Context, _, _, _ string) ([]content.File, error) {
+	return nil, nil
+}
+func (r *recordingProvider) Repositories() []source.Source { return nil }
+
+// TestServeGraph_BufCommitIDRefNotForwardedToUpstream confirms Defect 1:
+// when a client pins a dependency via the proxy-minted 32-hex buf commit_id
+// (the value buf.lock stores), ServeGraph must NOT forward that 32-hex id to
+// the upstream GetMeta as if it were a git SHA. The upstream only knows the
+// 40-hex git SHA; sending the 32-hex id yields a 422 "No commit found for SHA".
+//
+// Reproduces prod failure: grpc-ecosystem/grpc-gateway pinned at
+// commit_id e91b8a68fe214081808d79f1a1a4f09e (derived from git sha
+// e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9). Expect: graph resolves to the
+// pinned commit (200). Actual (bug): GetMeta is called with the 32-hex id and
+// the request fails.
+func TestServeGraph_BufCommitIDRefNotForwardedToUpstream(t *testing.T) {
+	const (
+		gitSHA = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+		cid    = "e91b8a68fe214081808d79f1a1a4f09e" // == commitUUID(gitSHA)
+	)
+	// Upstream recognizes ONLY the real 40-hex git SHA — mirrors GitHub,
+	// which returns 422 for the 32-hex buf id.
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			gitSHA: {Commit: gitSHA, DefaultBranch: "main"},
+		},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", cid)))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d (pinned commit must resolve)", resp.StatusCode, http.StatusOK)
+	}
+	for _, c := range repo.getMeta {
+		if c == cid {
+			t.Errorf("GetMeta forwarded buf commit_id %q to upstream as a git SHA — "+
+				"upstream rejects it (422). Forward the 40-hex git SHA %q instead. calls=%v",
+				cid, gitSHA, repo.getMeta)
+		}
+	}
+}
+
+// TestServeGraph_InfoCacheMustNotServeWrongCommit confirms Defect 2:
+// infoCache is keyed only by owner/module, so once ANY commit for a module is
+// cached, a later request pinning a DIFFERENT commit id returns the cached
+// (wrong) commit's id+digest. The proxy must honor the requested commit.
+//
+// Reproduces prod "no content returned for commit ID e91b8a68...": the proxy
+// served main-HEAD content under the pinned commit_id.
+func TestServeGraph_InfoCacheMustNotServeWrongCommit(t *testing.T) {
+	const (
+		headSHA = "34a6674c253f287533e8e904d89eb530b574128d" // main HEAD
+		pinSHA  = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9" // pinned older commit
+	)
+	headCID, _ := commitUUID(headSHA)
+	pinCID, _ := commitUUID(pinSHA)
+
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			headSHA: {Commit: headSHA, DefaultBranch: "main"},
+			pinSHA:  {Commit: pinSHA, DefaultBranch: "main"},
+		},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// 1) Prime infoCache with main HEAD (e.g. a prior HEAD/tag resolution).
+	if _, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", headSHA))); err != nil {
+		t.Fatalf("prime request failed: %v", err)
+	}
+
+	// 2) Now pin a different commit via its buf id. Must resolve to pinCID, not headCID.
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", pinCID)))
+	if err != nil {
+		t.Fatalf("pinned request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("graph returned main-HEAD commit_id %q for a request pinning %q — "+
+			"infoCache keyed by owner/module served the wrong commit. body has HEAD id.",
+			headCID, pinCID)
+	}
+	if !bytes.Contains(body, []byte(pinCID)) {
+		t.Errorf("graph did not return the pinned commit_id %q; body=%x", pinCID, body)
+	}
+}
+
+// TestServeGraph_UUIDRefShortCircuitsFromCidShaMap confirms that once the
+// proxy has minted a cid for a git SHA (and populated cidSha + infoCache),
+// a subsequent ServeGraph request that pins that cid is served entirely
+// from cache — zero GetMeta calls — and the response carries the pinned cid.
+// This is the warm-cache path: cidSha hit short-circuits before any upstream
+// touch, so no 422 risk and no round-trip.
+func TestServeGraph_UUIDRefShortCircuitsFromCidShaMap(t *testing.T) {
+	const (
+		gitSHA = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+	)
+	cid, _ := commitUUID(gitSHA)
+
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			gitSHA: {Commit: gitSHA, DefaultBranch: "main"},
+		},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// Prime: a prior resolution populated cidSha[cid]=gitSHA and the
+	// infoCache entry keyed by owner/module (commitID=cid). Send the git
+	// SHA as the ref — the existing path resolves it, mints the cid, and
+	// writes back both maps.
+	if _, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", gitSHA))); err != nil {
+		t.Fatalf("prime request failed: %v", err)
+	}
+
+	// The prime should have made exactly one GetMeta call (for the git SHA).
+	primeCalls := len(repo.getMeta)
+
+	// Pinned request: send the cid. infoCache has commitID=cid, so the
+	// cache-hit gate serves directly. No GetMeta, no resolveUUIDRef probe.
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", cid)))
+	if err != nil {
+		t.Fatalf("pinned request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if got := len(repo.getMeta) - primeCalls; got != 0 {
+		t.Errorf("pinned-cid request made %d new GetMeta call(s); want 0 (warm cidSha must short-circuit). calls=%v",
+			got, repo.getMeta)
+	}
+	if !bytes.Contains(body, []byte(cid)) {
+		t.Errorf("response does not carry the pinned cid %q; body=%x", cid, body)
+	}
+}
+
+// TestServeGraph_UUIDRefColdCache_ProbesWithInversePrefix confirms the
+// cold-cache path: when cidSha is empty for a cid, ServeGraph resolves via
+// commitUUIDInverse → 28-hex prefix → upstream GetMeta(prefix). The upstream
+// MUST be called with the prefix (not the cid), and the cid→sha mapping is
+// cached afterwards so the next request short-circuits.
+func TestServeGraph_UUIDRefColdCache_ProbesWithInversePrefix(t *testing.T) {
+	const (
+		gitSHA = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+	)
+	cid, _ := commitUUID(gitSHA)
+	prefix, _ := commitUUIDInverse(cid) // 28-hex
+
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			gitSHA: {Commit: gitSHA, DefaultBranch: "main"},
+		},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// No prime — cidSha is empty. ServeGraph must call GetMeta with the
+	// 28-hex prefix (which the recordingProvider resolves via prefix-match,
+	// mirroring real GitHub/Bitbucket behavior), NOT with the raw cid.
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", cid)))
+	if err != nil {
+		t.Fatalf("cold-cache pinned request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d (prefix probe must resolve)", resp.StatusCode, http.StatusOK)
+	}
+	if len(repo.getMeta) == 0 {
+		t.Fatal("expected at least one GetMeta call for the prefix probe; got zero")
+	}
+	// Every GetMeta call must be the prefix (or the resolved SHA), never the cid.
+	for _, c := range repo.getMeta {
+		if c == cid {
+			t.Errorf("GetMeta forwarded the raw cid %q to upstream (must use the %q prefix); calls=%v",
+				cid, prefix, repo.getMeta)
+		}
+	}
+	// The first call should be the prefix (resolveUUIDRef's probe).
+	if repo.getMeta[0] != prefix {
+		t.Errorf("first GetMeta call = %q, want the 28-hex prefix %q; calls=%v",
+			repo.getMeta[0], prefix, repo.getMeta)
+	}
+	if !bytes.Contains(body, []byte(cid)) {
+		t.Errorf("response does not carry the resolved cid %q; body=%x", cid, body)
+	}
+}
+
+// TestServeGraph_UUIDRefColdCache_NegativeCachesMiss confirms CR-01: an
+// unknown cid (one the upstream does not own) is negative-cached after the
+// first prefix probe, so a retry within TTL does NOT re-probe. This is the
+// defense probeCommitID has against flooding distinct unknown ids; the
+// resolveUUIDRef path must inherit it. Uses newTestCommitHandler so
+// probeNegativeTTL is non-zero (testMux wires a zero TTL which disables
+// negative caching, mirroring the production "enhancements off" default).
+func TestServeGraph_UUIDRefColdCache_NegativeCachesMiss(t *testing.T) {
+	const (
+		// A 40-hex SHA the upstream does NOT own; commitUUID of its first
+		// 14 bytes yields a cid whose 28-hex prefix the mock will reject.
+		unknownSHA = "ffffffffffffffffffffffffffffffffffffffff"
+	)
+	unknownCID, _ := commitUUID(unknownSHA)
+
+	// recordingProvider rejects any commit it doesn't have (no bySha entry
+	// matches), returning a non-transient error so the miss is cacheable.
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			// Intentionally does NOT contain unknownSHA.
+		},
+	}
+	h := newTestCommitHandler(repo)
+
+	_, ok := h.resolveUUIDRef(context.Background(), moduleRef{owner: "o", module: "m"}, unknownCID)
+	if ok {
+		t.Fatal("unknown cid should not resolve")
+	}
+	firstCalls := len(repo.getMeta)
+	if firstCalls != 1 {
+		t.Fatalf("expected 1 GetMeta call on first probe, got %d", firstCalls)
+	}
+	if !h.missCached(unknownCID) {
+		t.Fatal("unknown cid not negative-cached after a definitive miss")
+	}
+
+	// Retry within TTL: must NOT re-probe.
+	_, ok2 := h.resolveUUIDRef(context.Background(), moduleRef{owner: "o", module: "m"}, unknownCID)
+	if ok2 {
+		t.Fatal("unknown cid should still not resolve on retry")
+	}
+	if got := len(repo.getMeta) - firstCalls; got != 0 {
+		t.Errorf("negative-cached cid re-probed; %d new GetMeta call(s), want 0", got)
+	}
+}
+
+// TestServeGraph_PinnedCidDoesNotPoisonHeadRequest confirms WR-01's reverse
+// direction: after a pinned-cid request writes back an infoCache entry for a
+// module, a subsequent HEAD (empty ref) request for the same module must
+// RE-RESOLVE rather than be served the pinned cid's entry. Without the
+// symmetric cid-gate the pinned writeback would stick the module to that
+// commit for every later HEAD/SHA/tag request until restart.
+func TestServeGraph_PinnedCidDoesNotPoisonHeadRequest(t *testing.T) {
+	const (
+		pinSHA  = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9" // pinned older commit
+		headSHA = "34a6674c253f287533e8e904d89eb530b574128d" // main HEAD
+	)
+	pinCID, _ := commitUUID(pinSHA)
+	headCID, _ := commitUUID(headSHA)
+
+	repo := &recordingProvider{
+		bySha: map[string]content.Meta{
+			pinSHA:  {Commit: pinSHA, DefaultBranch: "main"},
+			headSHA: {Commit: headSHA, DefaultBranch: "main"},
+		},
+		head: &content.Meta{Commit: headSHA, DefaultBranch: "main"},
+	}
+	mux := testMux(repo)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// 1) Prime: a pinned-cid request resolves pinSHA and writes back an
+	//    infoCache entry minted for the cid (cidPinned=true).
+	if _, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequestWithRef("grpc-ecosystem", "grpc-gateway", pinCID))); err != nil {
+		t.Fatalf("pinned prime failed: %v", err)
+	}
+	primeCalls := len(repo.getMeta)
+
+	// 2) HEAD request (empty ref) for the same module. The symmetric gate
+	//    must treat the pinned entry as a miss and re-resolve HEAD.
+	//    buildV1GetGraphRequest (no ref field) yields ref.ref == "".
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.GraphService/GetGraph",
+		"application/proto", bytes.NewReader(buildV1GetGraphRequest("grpc-ecosystem", "grpc-gateway")))
+	if err != nil {
+		t.Fatalf("HEAD request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HEAD request after pin: status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	// Must have re-resolved: at least one new GetMeta call (for HEAD).
+	if got := len(repo.getMeta) - primeCalls; got < 1 {
+		t.Errorf("HEAD request after pinned writeback made %d new GetMeta call(s); want >= 1 (symmetric gate must re-resolve). calls=%v",
+			got, repo.getMeta)
+	}
+	// Must serve HEAD's cid, not the pinned cid.
+	if bytes.Contains(body, []byte(pinCID)) && !bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("HEAD request served the pinned cid %q instead of re-resolving HEAD %q; body=%x",
+			pinCID, headCID, body)
+	}
+	if !bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("HEAD request did not return HEAD commit_id %q; body=%x", headCID, body)
+	}
+}
+
+// TestServeDownload_PinnedCidNotServedFromWrongInfoCache confirms the
+// ServeDownload fix: when infoCache was minted for HEAD (cid=headCID) but
+// the request pins a different cid (pinCID) whose cidSha is known, the
+// files-cache hit is gated out (cid mismatch) and the fetch path prefers
+// cidSha[pinCID] over the cached HEAD commit. The response carries the
+// pinned cid and the pinned commit's files — not HEAD's.
+//
+// The handler is seeded directly (not via prime HTTP requests) so the
+// infoCache genuinely holds the WRONG (HEAD) entry while cidSha holds the
+// pinned cid → sha mapping — the exact prod state that produced "no content
+// returned for commit ID <pinned>".
+func TestServeDownload_PinnedCidNotServedFromWrongInfoCache(t *testing.T) {
+	const (
+		headSHA = "34a6674c253f287533e8e904d89eb530b574128d"
+		pinSHA  = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+		owner   = "grpc-ecosystem"
+		module  = "grpc-gateway"
+	)
+	headCID, _ := commitUUID(headSHA)
+	pinCID, _ := commitUUID(pinSHA)
+	ref := moduleRef{owner: owner, module: module}
+
+	headFile := content.File{Path: "head_only.txt", Data: []byte("HEAD content")}
+	pinFile := content.File{Path: "pin_only.txt", Data: []byte("pinned commit content")}
+
+	repo := &mockProvider{
+		byCommit: map[string]content.Meta{
+			pinSHA: {Commit: pinSHA, DefaultBranch: "main"},
+		},
+		filesByCommit: map[string][]content.File{
+			pinSHA: {pinFile},
+		},
+	}
+
+	h := newTestCommitHandler(repo)
+	// infoCache holds the WRONG entry: HEAD was minted, pinned cid was not.
+	h.infoCache[owner+"/"+module] = commitInfoCache{
+		commitID: headCID,
+		commit:   headSHA,
+		ownerID:  owner,
+		moduleID: owner + "/" + module,
+	}
+	h.filesMap[headCID] = []content.File{headFile}
+	// commitMap knows the pinned cid → module (e.g. a prior GetCommits
+	// registered it, or the foreign-id fallback did).
+	h.commitMap[pinCID] = ref
+	// cidSha knows the pinned cid → real SHA. This is what ServeDownload
+	// must prefer over the infoCache's HEAD commit.
+	h.cidSha[pinCID] = pinSHA
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/buf.registry.module.v1.DownloadService/", h.ServeDownload)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/buf.registry.module.v1.DownloadService/Download",
+		"application/proto", bytes.NewReader(buildDownloadRequest(pinCID)))
+	if err != nil {
+		t.Fatalf("download request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	// Response must carry the pinned cid, NOT HEAD's cid.
+	if bytes.Contains(body, []byte(headCID)) {
+		t.Errorf("download returned HEAD commit_id %q for a request pinning %q — "+
+			"infoCache served the wrong commit", headCID, pinCID)
+	}
+	if !bytes.Contains(body, []byte(pinCID)) {
+		t.Errorf("download did not return the pinned commit_id %q; body=%x", pinCID, body)
+	}
+	// Content must be the pinned commit's files, not HEAD's.
+	if !bytes.Contains(body, pinFile.Data) {
+		t.Errorf("download did not return the pinned commit's file content %q; body=%x",
+			string(pinFile.Data), body)
+	}
+	if bytes.Contains(body, headFile.Data) {
+		t.Errorf("download returned HEAD's file content %q for a request pinning %q",
+			string(headFile.Data), pinCID)
+	}
+}
+
+// dualCountingProvider wraps a provider to count GetMeta and GetFiles calls so
+// tests can assert that a warm cache suppresses repeat upstream traffic. Unlike
+// countingProvider (blobs_test.go, GetFiles-only via atomic pointer), this one
+// tracks both methods locally for the WR-03 repeat-request assertion.
+type dualCountingProvider struct {
+	provider
+	getMetaCalls  int
+	getFilesCalls int
+}
+
+func (c *dualCountingProvider) GetMeta(ctx context.Context, owner, repo, commit string) (content.Meta, error) {
+	c.getMetaCalls++
+	return c.provider.GetMeta(ctx, owner, repo, commit)
+}
+
+func (c *dualCountingProvider) GetFiles(ctx context.Context, owner, repo, commit string) ([]content.File, error) {
+	c.getFilesCalls++
+	return c.provider.GetFiles(ctx, owner, repo, commit)
+}
+
+// TestServeDownload_PinnedCidRepeatHitsFilesCache confirms WR-03: after the
+// first pinned-cid Download resolves and writes back infoCache + filesMap,
+// the second identical pinned-cid Download makes ZERO new GetMeta/GetFiles
+// calls (it must hit the files-cache directly).
+func TestServeDownload_PinnedCidRepeatHitsFilesCache(t *testing.T) {
+	const (
+		pinSHA = "e91b8a68fe21818d79f1a1a4f09eaf4db7e810a9"
+		owner  = "grpc-ecosystem"
+		module = "grpc-gateway"
+	)
+	pinCID, _ := commitUUID(pinSHA)
+	ref := moduleRef{owner: owner, module: module}
+	pinFile := content.File{Path: "pin_only.txt", Data: []byte("pinned commit content")}
+
+	base := &mockProvider{
+		byCommit: map[string]content.Meta{
+			pinSHA: {Commit: pinSHA, DefaultBranch: "main"},
+		},
+		filesByCommit: map[string][]content.File{
+			pinSHA: {pinFile},
+		},
+	}
+	repo := &dualCountingProvider{provider: base}
+
+	h := newTestCommitHandler(repo)
+	// commitMap + cidSha are pre-seeded so the first request resolves via the
+	// fetch path (infoCache starts empty → files-cache miss → GetMeta/GetFiles
+	// → writeback). This models the first-ever pinned-cid Download.
+	h.commitMap[pinCID] = ref
+	h.cidSha[pinCID] = pinSHA
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/buf.registry.module.v1.DownloadService/", h.ServeDownload)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	doDownload := func(label string) []byte {
+		resp, err := http.Post(srv.URL+"/buf.registry.module.v1.DownloadService/Download",
+			"application/proto", bytes.NewReader(buildDownloadRequest(pinCID)))
+		if err != nil {
+			t.Fatalf("%s download failed: %v", label, err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d, want %d; body=%x", label, resp.StatusCode, http.StatusOK, body)
+		}
+		return body
+	}
+
+	firstBody := doDownload("first")
+	firstMeta := repo.getMetaCalls
+	firstFiles := repo.getFilesCalls
+	if firstMeta == 0 {
+		t.Fatal("first download should have made at least one GetMeta call (cold cache)")
+	}
+	if firstFiles == 0 {
+		t.Fatal("first download should have made at least one GetFiles call (cold cache)")
+	}
+	if !bytes.Contains(firstBody, pinFile.Data) {
+		t.Errorf("first download did not return the pinned file content; body=%x", firstBody)
+	}
+
+	// Second identical request must hit the files-cache: no new upstream calls.
+	secondBody := doDownload("second")
+	if repo.getMetaCalls != firstMeta {
+		t.Errorf("second download made %d new GetMeta call(s); want 0 (files-cache must hit). before=%d after=%d",
+			repo.getMetaCalls-firstMeta, firstMeta, repo.getMetaCalls)
+	}
+	if repo.getFilesCalls != firstFiles {
+		t.Errorf("second download made %d new GetFiles call(s); want 0 (files-cache must hit). before=%d after=%d",
+			repo.getFilesCalls-firstFiles, firstFiles, repo.getFilesCalls)
+	}
+	if !bytes.Contains(secondBody, pinFile.Data) {
+		t.Errorf("second download did not return the pinned file content; body=%x", secondBody)
+	}
+}
+
 // buildDownloadRequest builds a protobuf-encoded Download request using a commit ID.
 func buildDownloadRequest(commitID string) []byte {
 	// ResourceRef: id=1
@@ -1354,6 +1923,7 @@ func newTestCommitHandler(repo provider) *commitServiceHandler {
 		commitMap:       make(map[string]moduleRef),
 		infoCache:       make(map[string]commitInfoCache),
 		filesMap:        make(map[string][]content.File),
+		cidSha:          make(map[string]string),
 		missCache:       make(map[string]time.Time),
 		probeTimeout:    time.Second,
 		probeNegativeTTL: time.Minute,
