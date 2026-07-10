@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Diagnostic Logging — In Progress
 status: executing
-last_updated: "2026-07-09T14:50:54.595Z"
-last_activity: 2026-07-09 -- Phase 24 execution started
+last_updated: "2026-07-10T07:43:08.135Z"
+last_activity: 2026-07-10 -- Phase 25 planning complete
 progress:
-  total_phases: 13
-  completed_phases: 12
-  total_plans: 16
-  completed_plans: 15
-  percent: 92
+  total_phases: 15
+  completed_phases: 14
+  total_plans: 20
+  completed_plans: 17
+  percent: 85
 ---
 
 # Project State
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-10)
 
 Phase: 24 (resolve-buf-cid-ref-in-servegraph-honor-pinned-commit) — EXECUTING
 Plan: 1 of 1
-Status: Executing Phase 24
-Last activity: 2026-07-09 -- Phase 24 execution started
+Status: Ready to execute
+Last activity: 2026-07-10 -- Phase 25 planning complete
 
 Progress: [█████████░] 94%
 
@@ -89,6 +89,7 @@ None yet.
 - Phase 22 added: Fix v1.30.1 v1alpha1 read-path UUID handling; verify v1 protocol works. Depends on Phase 21. Scope: (1) apply `commitUUIDInverse` in the v1alpha1 `DownloadManifestAndBlobs` handler chain so 32-char buf UUIDs resolve to git SHAs before hitting GitHub's tree API; (2) re-run `TestGenerateWithPinnedBufLock` to confirm both subtests pass; (3) broader verification that the v1 (v1alpha1) protocol path works end-to-end (not just `buf generate` — also `buf mod update` and the existing smoke test that Phase 19 revealed was broken for v1.30.1). See `.planning/phases/22-fix-v1-30-1-v1alpha1-read-path-uuid-handling-verify-v1-proto/`.
 - Phase 23 added: e2e tests for branch-name and non-default-branch commit refs in buf.yaml deps. Closes the ref-shape coverage gap from Phase 19 (which covered tag refs only). Two v1.69.0 tests: `TestRefRespected_BranchName_PinsBranchTip` (gh-pages branch ref → `repos.GetCommit` fall-through pins branch tip) and `TestRefRespected_NonDefaultBranchCommitSHA` (raw 40-char SHA of a gh-pages commit → `isSHA` fast path stamps it branch-agnostically). Both behaviors already shipped in Phase 18 — test-only phase. Test code in `8cf99fa`; docs in separate commit. See `.planning/phases/23-e2e-tests-branch-name-and-non-default-branch-commit-refs-in-buf-yaml-deps/`.
 - Phase 24 added: Resolve buf cid ref in ServeGraph; honor pinned commit. Prod `buf generate` failed for grpc-ecosystem/grpc-gateway pinned in buf.lock at `e91b8a68fe214081808d79f1a1a4f09e` — ServeGraph forwarded the 32-hex cid to GitHub (422→502) and infoCache keyed by owner/module served HEAD for the pinned cid. Diagnosis + two RED confirming tests in `.planning/debug/buf-cid-ref-forwarded-to-upstream.md`. Fix: cid→sha map at every mint site, ServeGraph UUID-resolution branch (commitUUIDInverse + 28-hex prefix probe, ported from Phase 18), infoCache cid-gating, ServeDownload cid→sha preference. See `.planning/phases/24-resolve-buf-cid-ref-in-servegraph-honor-pinned-commit/`.
+- Phase 25 added: Address PR #39 post-merge review findings. Post-merge reviews of PR #39 (Phases 19–22, branch `buf-proto-update-3` → `main`, MERGED, 6184+/68-) raised findings of varying severity. Verified real problems to fix: (1) `isConventionalDefaultName` carve-out silently changes resolution for repos with a real branch named `main`/`master`/`develop`/`trunk` that is NOT the default — a real behavioral regression (`internal/providers/{github,bitbucket}/getrepo.go`); (2) misleading error wrap at `internal/connect/blobs.go:45` says `GetRepository` but calls `GetFiles` (pre-existing, adjacent to new code); (3) PR-22-4 live e2e was never run against real GitHub (TLS issue, now resolved by `df02ff0`) — residual risk for v1alpha1 read path; (4) `isConventionalDefaultName` (and `isSHA`) duplicated verbatim across two providers with identical 17-line doc comment; (5) dangling proto path `api/proto/buf/registry/module/v1beta1/resource.proto` cited in `commits_helpers_test.go:375` does not exist in repo (verified by `find`); (6) `commitLineRE` regex duplicated between `e2e/ref_test.go:42` and `e2e/testutil/server.go:285`; (7) post-construction mutation of `api.commitResolver` at `api.go:124` is fragile — a future alternate constructor that forgets to wire it silently degrades. Lower-priority items acknowledged in reviews as deliberate trade-offs (e.g. `commitUUIDForTest` byte-table mirror, `resolveCommitForRead` logging asymmetry) are NOT in this phase. See `.planning/phases/25-address-pr-39-post-merge-review-findings-pin-multi-default-b/`.
 
 ## Deferred Items
 

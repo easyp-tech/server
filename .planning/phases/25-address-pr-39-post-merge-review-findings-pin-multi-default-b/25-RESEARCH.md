@@ -513,7 +513,7 @@ OK, the cleanest approach is documentation + keeping the nil-guard. The risk is 
 | A3 | The only callers of `New` that construct `*api` without wiring `commitResolver` are tests (via `New` -> `NewWithConfig`) | Finding 7 | LOW -- Grep confirms `New` is called from `testMux`/`testMuxWithConfig` in `api_test.go` and from `cmd/easyp` startup. Both eventually call `NewWithConfig` which constructs `commitHandler` and sets the resolver. No third constructor exists. |
 | A4 | Removing `isConventionalDefaultName` from the provider layer does not affect the connect layer | Finding 1, Finding 4 | HIGH -- `isConventionalDefaultName` is only defined in the two provider packages. The connect layer does not reference it. Verified by grep for `isConventionalDefaultName` in `internal/connect/` -- zero hits. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the `isConventionalDefaultName` function be REMOVED entirely or EXTRACTED to a shared package?**
    - What we know: Extract-to-shared (Finding 4) conflicts with Remove-entirely (Finding 1). You can't extract a function you also deleted.

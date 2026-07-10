@@ -259,7 +259,6 @@ Plans:
 **Requirements**: FIX-01, FIX-02, FIX-03, FIX-04, FIX-05, FIX-06, FIX-07
 **Depends on:** Phase 24
 **Plans:** 3 plans
-
 Plans:
 
 - [ ] [25-01](./phases/25-address-pr-39-post-merge-review-findings-pin-multi-default-b/25-01-PLAN.md) — Remove isConventionalDefaultName carve-out from both providers (FIX-01) + extract isSHA to internal/providers/content (FIX-04)
