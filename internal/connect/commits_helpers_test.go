@@ -372,7 +372,7 @@ func TestIsUUID(t *testing.T) {
 func TestParseResourceRefName_ReadsRef(t *testing.T) {
 	// Build a Name { owner=1, module=2, ref=4 } message. The buf
 	// `Name.child` oneof defines label_name=3 and ref=4 (see
-	// api/proto/buf/registry/module/v1beta1/resource.proto); this test
+	// buf BSR Name message (protocol buffers wire format); this test
 	// pins the field-4 arm of parseResourceRefName.
 	var name []byte
 	name = protowire.AppendTag(name, 1, protowire.BytesType)

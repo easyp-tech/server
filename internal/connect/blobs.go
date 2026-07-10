@@ -42,7 +42,7 @@ func (a *api) DownloadManifestAndBlobs(
 
 	files, err := a.repo.GetFiles(ctx, req.Msg.GetOwner(), req.Msg.GetRepository(), ref)
 	if err != nil {
-		return nil, asConnectError(fmt.Errorf("a.repo.GetRepository: %w", err))
+		return nil, asConnectError(fmt.Errorf("a.repo.GetFiles: %w", err))
 	}
 
 	var (
