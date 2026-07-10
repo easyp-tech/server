@@ -58,8 +58,8 @@ func (c client) getMeta(ctx context.Context, commit string) (content.Meta, error
 // resolved commit id, the displayId (short sha), and a few metadata
 // fields. We only need id.
 type commitInfo struct {
-	ID          string `json:"id"`
-	DisplayID   string `json:"displayId"`
+	ID        string `json:"id"`
+	DisplayID string `json:"displayId"`
 }
 
 // getCommit resolves a ref (branch name, tag, or short sha) to a full

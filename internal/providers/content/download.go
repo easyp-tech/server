@@ -3,9 +3,8 @@ package content
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"slices"
+	"strings"
 
 	"github.com/easyp-tech/server/internal/providers/filter"
 	"github.com/easyp-tech/server/internal/shake256"

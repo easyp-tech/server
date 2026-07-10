@@ -35,7 +35,7 @@ func TestOldProtocolBufModUpdateTwice(t *testing.T) {
 deps:
   - 127.0.0.1:%d/googleapis/googleapis
 `, srv.Port)
-	if err := os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0o600); err != nil {
 		t.Fatalf("writing buf.yaml: %v", err)
 	}
 

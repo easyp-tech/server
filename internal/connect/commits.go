@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -14,13 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"log/slog"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"
 	"github.com/easyp-tech/server/internal/reqid"
 	"github.com/easyp-tech/server/internal/shake256"
-	"google.golang.org/protobuf/encoding/protowire"
 )
 
 type commitInfoCache struct {
@@ -845,6 +845,7 @@ func (h *commitServiceHandler) ServeDownload(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/proto")
 	_, _ = w.Write(respMsg)
 }
+
 func toB5Digest(b4Digest []byte) ([]byte, error) {
 	// B5 digest wraps B4 (shake256) value: SHA3-Shake256("shake256:" + hex(b4_hash))
 	// This matches buf's getB5DigestForBucketAndDepDigests with zero dependencies.
@@ -855,7 +856,6 @@ func toB5Digest(b4Digest []byte) ([]byte, error) {
 	}
 	return hash[:], nil
 }
-
 
 func (h *commitServiceHandler) computeB4Digest(r *http.Request, ref moduleRef, commit, cid string) ([]byte, error) {
 	files, err := h.api.repo.GetFiles(r.Context(), ref.owner, ref.module, commit)

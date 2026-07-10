@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
 	"log/slog"
+	"time"
 
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"

@@ -3,9 +3,8 @@ package filter
 import (
 	"fmt"
 	"hash/crc32"
-	"strings"
-
 	"slices"
+	"strings"
 )
 
 const ProtoSuffix = ".proto"

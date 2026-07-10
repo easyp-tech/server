@@ -15,12 +15,13 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/encoding/protowire"
+
 	registry "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1"
 	v1alpha1connect "github.com/easyp-tech/server/gen/proto/buf/alpha/registry/v1alpha1/v1alpha1connect"
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/source"
 	"github.com/easyp-tech/server/internal/shake256"
-	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // errUpstream is the sentinel error the upstream-failure test injects into
@@ -38,7 +39,7 @@ type mockProvider struct {
 	// entry for the requested commit (or a not-found error), letting tests
 	// distinguish HEAD from an older sha. When nil, the legacy m.meta/m.files
 	// behavior is used (ignoring the commit arg).
-	byCommit     map[string]content.Meta
+	byCommit      map[string]content.Meta
 	filesByCommit map[string][]content.File
 }
 
@@ -958,15 +959,15 @@ func TestGraphServiceV1ReturnsProtobuf(t *testing.T) {
 	commitResp.Body.Close()
 
 	testPaths := []struct {
-			path string
-			body []byte
-		}{
-			{"/buf.registry.module.v1.GraphService/GetGraph", buildV1GetGraphRequest("owner", "repo")},
-			{"/buf.registry.module.v1beta1.GraphService/GetGraph", buildGetGraphRequest("owner", "repo")},
-		}
-		for _, tc := range testPaths {
-			t.Run(tc.path, func(t *testing.T) {
-				resp, err := http.Post(server.URL+tc.path, "application/proto", bytes.NewReader(tc.body))
+		path string
+		body []byte
+	}{
+		{"/buf.registry.module.v1.GraphService/GetGraph", buildV1GetGraphRequest("owner", "repo")},
+		{"/buf.registry.module.v1beta1.GraphService/GetGraph", buildGetGraphRequest("owner", "repo")},
+	}
+	for _, tc := range testPaths {
+		t.Run(tc.path, func(t *testing.T) {
+			resp, err := http.Post(server.URL+tc.path, "application/proto", bytes.NewReader(tc.body))
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
@@ -1920,14 +1921,14 @@ func newTestCommitHandler(repo provider) *commitServiceHandler {
 			log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 			repo: repo,
 		},
-		commitMap:       make(map[string]moduleRef),
-		infoCache:       make(map[string]commitInfoCache),
-		filesMap:        make(map[string][]content.File),
-		cidSha:          make(map[string]string),
-		missCache:       make(map[string]time.Time),
-		probeTimeout:    time.Second,
+		commitMap:        make(map[string]moduleRef),
+		infoCache:        make(map[string]commitInfoCache),
+		filesMap:         make(map[string][]content.File),
+		cidSha:           make(map[string]string),
+		missCache:        make(map[string]time.Time),
+		probeTimeout:     time.Second,
 		probeNegativeTTL: time.Minute,
-		probeSem:        make(chan struct{}, maxConcurrentProbes),
+		probeSem:         make(chan struct{}, maxConcurrentProbes),
 	}
 }
 
@@ -2118,7 +2119,7 @@ func TestServeDownload_AfterRestart_ProbeResolvesUUID(t *testing.T) {
 		repos: []source.Source{
 			&mockSource{
 				owner: "cyp", repoName: "cyp-apis",
-				commit:      headSha,
+				commit:       headSha,
 				getMetaCalls: &sourceCalls,
 			},
 		},

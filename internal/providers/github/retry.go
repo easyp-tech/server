@@ -159,10 +159,10 @@ func shouldRetryHTTP(resp *http.Response, err error) bool {
 	}
 	switch resp.StatusCode {
 	case http.StatusTooManyRequests, // 429
-		http.StatusInternalServerError,      // 500
-		http.StatusBadGateway,                // 502
-		http.StatusServiceUnavailable,        // 503
-		http.StatusGatewayTimeout:            // 504
+		http.StatusInternalServerError, // 500
+		http.StatusBadGateway,          // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout:      // 504
 		return true
 	default:
 		return false

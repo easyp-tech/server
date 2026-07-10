@@ -7,12 +7,12 @@ import (
 
 // mockSource implements source.Source for testing
 type mockSource struct {
-	name      string
-	owner     string
-	repoName  string
-	sourceType string
-	configHash string
-	getMetaErr error
+	name        string
+	owner       string
+	repoName    string
+	sourceType  string
+	configHash  string
+	getMetaErr  error
 	getFilesErr error
 }
 
@@ -26,12 +26,14 @@ func (m *mockSource) GetFiles(ctx context.Context, commit string) (mockFiles, er
 
 func (m *mockSource) ConfigHash() string { return m.configHash }
 func (m *mockSource) Name() string       { return m.name }
-func (m *mockSource) Owner() string     { return m.owner }
+func (m *mockSource) Owner() string      { return m.owner }
 func (m *mockSource) RepoName() string   { return m.repoName }
 func (m *mockSource) Type() string       { return m.sourceType }
 
-type mockMeta struct{}
-type mockFiles []byte
+type (
+	mockMeta  struct{}
+	mockFiles []byte
+)
 
 // mockCache implements Cache for testing
 type mockCache struct {

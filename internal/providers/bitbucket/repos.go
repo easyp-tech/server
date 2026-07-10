@@ -2,9 +2,8 @@ package bitbucket
 
 import (
 	"context"
-	"net/url"
-
 	"log/slog"
+	"net/url"
 	"slices"
 
 	"github.com/easyp-tech/server/internal/providers/content"

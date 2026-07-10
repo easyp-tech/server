@@ -24,4 +24,4 @@ run = "go test ./... -race -count=1"
 
 [tasks.lint]
 description = "Auto-fix then check against .golangci.yml."
-run = ["golangci-lint run --fix", "golangci-lint run"]
+run = ["golangci-lint --version", "golangci-lint run --fix", "golangci-lint run"]

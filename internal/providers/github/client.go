@@ -3,9 +3,8 @@ package github
 import (
 	"context"
 	"io"
-	"net/http"
-
 	"log/slog"
+	"net/http"
 
 	"github.com/google/go-github/v59/github"
 )

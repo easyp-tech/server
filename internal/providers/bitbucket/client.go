@@ -7,16 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"text/template"
 	"time"
-
-	"log/slog"
 )
 
-const defaultHTTPTimeout = 30 * time.Second
-const defaultBodyLimit = 50 * 1 << 20 // 50MB
+const (
+	defaultHTTPTimeout = 30 * time.Second
+	defaultBodyLimit   = 50 * 1 << 20 // 50MB
+)
 
 type client struct {
 	log    *slog.Logger
