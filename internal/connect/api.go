@@ -2,10 +2,9 @@ package connect
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
-
-	"log/slog"
 
 	"connectrpc.com/connect"
 

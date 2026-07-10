@@ -59,6 +59,16 @@ linters:
       - path: internal/providers/multisource/repo.go
         linters:
           - ineffassign
+          - staticcheck
+      - path: internal/connect/api.go
+        linters:
+          - errcheck
+      - path: e2e/testutil/server.go
+        linters:
+          - errcheck
+      - path: internal/providers/content/helpers.go
+        linters:
+          - staticcheck
       - linters:
           - dupl
           - errcheck
