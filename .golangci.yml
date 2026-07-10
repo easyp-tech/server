@@ -4,6 +4,7 @@ run:
 linters:
   default: standard
   disable:
+    - gci
     - varnamelen
   settings:
     depguard:
