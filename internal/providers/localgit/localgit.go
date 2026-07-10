@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
 	"slices"
 
 	"github.com/go-git/go-git/v5"
