@@ -52,7 +52,8 @@ func TestConfigGeneration(t *testing.T) {
 	// Verify file mode is 0600.
 	info, err := os.Stat(cfgPath)
 	require.NoError(t, err, "stat config file")
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "config file mode should be 0600")
+	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(),
+		"config file mode should be 0600")
 }
 
 func TestRequireEnvToken_Skips(t *testing.T) {

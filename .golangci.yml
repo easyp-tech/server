@@ -74,6 +74,7 @@ linters:
           - errcheck
           - exhaustruct
           - funlen
+          - gci
           - gochecknoglobals
           - gocyclo
           - gosec
@@ -110,6 +111,9 @@ formatters:
   exclusions:
     generated: lax
     paths:
+      - cmd/easyp/main\.go
+      - internal/connect/api\.go
+      - internal/connect/bynames\.go
       - bin
       - config
       - debian
