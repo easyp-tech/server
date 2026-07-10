@@ -144,3 +144,38 @@ func TestGetMeta_DefaultBranchName_github(t *testing.T) {
 	}
 }
 
+
+// TestGetMeta_ConventionalDefaultName_github is the regression guard
+// for the v1.30.1 v1alpha1 case where the buf CLI sends the buf
+// default label name (e.g., "main") as the reference, even when it
+// does NOT match the repo's actual default branch name. The live case
+// caught by Phase 19 e2e tests: googleapis/googleapis has default
+// branch "master" but the buf CLI v1.30.1 sends reference="main" (the
+// buf default label name). The v1alpha1 ResolveService handler
+// (modulepins.go GetModulePins) is NOT gated by parseResourceRefName,
+// so the carve-out (content.IsConventionalDefaultName) must remain.
+func TestGetMeta_ConventionalDefaultName_github(t *testing.T) {
+	const headCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	mock := newMockRepos().
+		WithGet("googleapis", "googleapis",
+			&github.Repository{DefaultBranch: github.String("master")}, nil).
+		WithGetBranch("googleapis", "googleapis", "master", &github.Branch{
+			Commit: &github.RepositoryCommit{SHA: github.String(headCommit)},
+		}, nil).
+		WithGetCommitError("googleapis", "googleapis", "main",
+			errors.New("unexpected GetCommit call: conventional-default-name carve-out should not call repos.GetCommit"))
+
+	c := client{log: testLogger(), repos: mock}
+	meta, err := c.GetMeta(context.Background(), "googleapis", "googleapis", "main")
+	if err != nil {
+		t.Fatalf("GetMeta(\"main\") unexpected error: %v", err)
+	}
+	if mock.GetCommitCallCount("googleapis", "googleapis", "main") != 0 {
+		t.Errorf("expected 0 GetCommit calls for conventional default name, got %d",
+			mock.GetCommitCallCount("googleapis", "googleapis", "main"))
+	}
+	if meta.Commit != headCommit {
+		t.Fatalf("meta.Commit = %q, want %q (HEAD from getRepo via repos.GetBranch)", meta.Commit, headCommit)
+	}
+}

@@ -203,3 +203,45 @@ func TestGetMeta_DefaultBranchName_bitbucket(t *testing.T) {
 	}
 }
 
+
+// TestGetMeta_ConventionalDefaultName_bitbucket is the regression
+// guard for the v1.30.1 v1alpha1 case where the buf CLI sends the buf
+// default label name (e.g., "main") as the reference, even when it
+// does NOT match the repo's actual default branch name. The live case
+// caught by Phase 19 e2e tests: googleapis/googleapis has default
+// branch "master" but the buf CLI v1.30.1 sends reference="main" (the
+// buf default label name). The v1alpha1 ResolveService handler
+// (modulepins.go GetModulePins) is NOT gated by parseResourceRefName,
+// so the carve-out (content.IsConventionalDefaultName) must remain.
+func TestGetMeta_ConventionalDefaultName_bitbucket(t *testing.T) {
+	const headCommit = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	commitsHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == testBasePath+"/branches/default":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"` + headCommit + `","displayId":"master","type":"BRANCH","latestCommit":"` + headCommit + `","latestChangeset":"` + headCommit + `","isDefault":true}`))
+		case r.URL.Path == testBasePath+"/commits/main":
+			commitsHits++
+			t.Errorf("unexpected /commits/main call: conventional-default-name carve-out should not call /commits/{commit}")
+			http.NotFound(w, r)
+		default:
+			t.Errorf("unexpected upstream call to %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := connect(nil, "", "", srv.URL+testBasePath)
+	meta, err := c.getMeta(context.Background(), "main")
+	if err != nil {
+		t.Fatalf("getMeta(\"main\") unexpected error: %v", err)
+	}
+	if commitsHits != 0 {
+		t.Errorf("expected 0 /commits/ calls for conventional default name, got %d", commitsHits)
+	}
+	if meta.Commit != headCommit {
+		t.Fatalf("meta.Commit = %q, want %q (HEAD from getRepo via /branches/default)", meta.Commit, headCommit)
+	}
+}

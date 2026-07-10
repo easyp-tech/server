@@ -17,22 +17,26 @@ func (c client) getMeta(ctx context.Context, commit string) (content.Meta, error
 
 	// Four branches:
 	//   - commit == "":              no ref was supplied; keep HEAD from getRepo.
-	//   - commit == DefaultBranch:   client asked for the default branch by name;
-	//                                meta.Commit already holds HEAD.
+	//   - commit == DefaultBranch || content.IsConventionalDefaultName(commit):
+	//                              client asked for the default branch by name,
+	//                              or the v1.30.1 v1alpha1 path sent a well-known
+	//                              default label (main/master/develop/trunk);
+	//                              meta.Commit already holds HEAD.
 	//   - content.IsSHA(commit):     raw SHA fast path (40/64 lowercase hex).
 	//   - non-SHA non-empty:         treat as a ref and resolve via the provider's
 	//                                /commits endpoint (accepts ref names, short
 	//                                SHAs >= 7 chars, and full SHAs).
 	//
-	// Note: The isConventionalDefaultName carve-out (main/master/develop/trunk)
-	// was REMOVED in Phase 25. It was originally added to handle the v1.30.1
-	// v1alpha1 case where buf sent reference="main" via label_name=3. Phase 18
-	// changed parseResourceRefName to read proto field 4 only, so label_name=3
-	// is silently ignored and ref="" falls through to the HEAD path. The carve-out
-	// is no longer reached. Its risk -- silently returning HEAD for a real branch
-	// named one of the conventional labels -- outweighed its benefit.
+	// Note: The isConventionalDefaultName carve-out was extracted to
+	// internal/providers/content/helpers.go in Phase 25 but the condition
+	// was RETAINED because the v1alpha1 ResolveService handler (modulepins.go:
+	// GetModulePins) is NOT gated by parseResourceRefName and still passes
+	// label_name="main" (proto field 3) as commit="main" to getMeta. Only the
+	// v1beta1 CommitService path is guarded by parseResourceRefName (Phase 18).
+	// If the v1alpha1 ResolveService path is also updated to ignore label_name,
+	// this carve-out can be removed.
 	if commit != "" {
-		if commit == meta.DefaultBranch {
+		if commit == meta.DefaultBranch || content.IsConventionalDefaultName(commit) {
 			// Client asked for the default branch by name; meta.Commit already
 			// holds HEAD (set by getRepo from repo.LatestCommit).
 		} else if content.IsSHA(commit) {
