@@ -11,7 +11,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-
 	"log/slog"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/config"

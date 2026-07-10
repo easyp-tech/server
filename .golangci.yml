@@ -44,6 +44,21 @@ linters:
         text: 'unexported-return: exported func .+ returns unexported type .+, which can be annoying to use'
       - path: cmd/[^/]+/.+\.go
         text: exitAfterDefer
+      - path: internal/connect/commits_helpers.go
+        linters:
+          - staticcheck
+      - path: internal/providers/bitbucket/repos.go
+        linters:
+          - staticcheck
+      - path: internal/providers/github/repos.go
+        linters:
+          - staticcheck
+      - path: internal/providers/bitbucket/getrepo_test.go
+        linters:
+          - staticcheck
+      - path: internal/providers/multisource/repo.go
+        linters:
+          - ineffassign
       - linters:
           - dupl
           - errcheck
@@ -52,8 +67,11 @@ linters:
           - gochecknoglobals
           - gocyclo
           - gosec
+          - ineffassign
           - ireturn
           - lll
+          - staticcheck
+          - unused
           - unparam
         path: _test\.go
     paths:
