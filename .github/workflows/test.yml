@@ -17,7 +17,7 @@ jobs:
       - name: Run golangci-lint v2
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v2
+          version: v2.12.2
 
   unit-test:
     needs: [lint]
