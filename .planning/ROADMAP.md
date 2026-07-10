@@ -48,7 +48,7 @@
 - [x] **Phase 22: Fix v1.30.1 v1alpha1 read-path UUID handling** — Wire v1alpha1 DownloadManifestAndBlobs to Phase 18 UUID-resolution machinery (completed 2026-07-09)
 - [x] **Phase 23: e2e tests for branch-name and non-default-branch commit refs** — Add branch-name and raw-SHA ref coverage for buf.yaml deps (completed 2026-07-09)
 - [x] **Phase 24: Resolve buf cid ref in ServeGraph; honor pinned commit** — cid→sha map + ServeGraph UUID branch + infoCache cid-gating + ServeDownload cid→sha preference (completed 2026-07-09)
-- [ ] **Phase 25: Address PR #39 post-merge review findings** — Fix 7 post-merge findings: remove isConventionalDefaultName carve-out, fix error wrap strings, verify v1alpha1 e2e, extract duplicated helpers and regex, harden commitResolver construction
+- [x] **Phase 25: Address PR #39 post-merge review findings** — Fix 7 post-merge findings: extract duplicated helpers and regex, retain carve-out via shared helper, fix error wrap strings, verify v1alpha1 e2e, harden commitResolver construction (completed 2026-07-10)
 
 ## Phase Details
 
