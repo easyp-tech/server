@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"os/exec"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -35,23 +33,8 @@ const pinnedRef = "common-protos-1_3_1"
 //	master     (default)   → master tip SHA
 const branchRef = "gh-pages"
 
-// commitLineRE matches the "commit: <value>" line in either buf.lock
-// format. v1 and v2 use the same field name (just under different
-// parent keys: `remote/owner/repository` vs `name`), so a single regex
-// covers both. The pinned value is a buf-issued 32-char dashless UUID.
-var commitLineRE = regexp.MustCompile(`(?m)^[ \t]+commit:[ \t]+(\S+)\s*$`)
-
-// extractCommitFromLock returns the first "commit:" value in buf.lock,
-// or an error if no such line is present. Used to assert the proxy
-// pinned to the expected commit (or, for the diff tests, that two
-// updates pinned to different commits).
-func extractCommitFromLock(lockContent []byte) (string, error) {
-	m := commitLineRE.FindSubmatch(lockContent)
-	if m == nil {
-		return "", errors.New("no commit: line found in buf.lock")
-	}
-	return string(m[1]), nil
-}
+// extractCommitFromLock is now defined in e2e/testutil/server.go as
+// testutil.ExtractCommitFromLock — see that function for the contract.
 
 // TestRefRespected_ModUpdate_DiffersFromHead is the ref-honoring
 // matrix test. For every cached buf version it runs "buf mod update"
@@ -87,7 +70,7 @@ func TestRefRespected_ModUpdate_DiffersFromHead(t *testing.T) {
 				t.Fatalf("buf mod update (HEAD) failed for %s (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
 					version, headExit, srvHead.Output.String(), headStderr)
 			}
-			headCommit, err := extractCommitFromLock(headLock)
+			headCommit, err := testutil.ExtractCommitFromLock(headLock)
 			if err != nil {
 				t.Fatalf("extract commit from HEAD lock for %s: %v\nlock:\n%s", version, err, headLock)
 			}
@@ -99,7 +82,7 @@ func TestRefRespected_ModUpdate_DiffersFromHead(t *testing.T) {
 				t.Fatalf("buf mod update (ref=%s) failed for %s (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
 					pinnedRef, version, refExit, srvRef.Output.String(), refStderr)
 			}
-			refCommit, err := extractCommitFromLock(refLock)
+			refCommit, err := testutil.ExtractCommitFromLock(refLock)
 			if err != nil {
 				t.Fatalf("extract commit from ref lock for %s: %v\nlock:\n%s", version, err, refLock)
 			}
@@ -151,7 +134,7 @@ func TestRefRespected_ModUpdate_MatchesUpstreamSHA(t *testing.T) {
 			pinnedRef, exitCode, srv.Output.String(), stderr)
 	}
 
-	gotCommit, err := extractCommitFromLock(lock)
+	gotCommit, err := testutil.ExtractCommitFromLock(lock)
 	if err != nil {
 		t.Fatalf("extract commit from lock: %v\nlock:\n%s", err, lock)
 	}
@@ -180,7 +163,7 @@ func TestRefRespected_DepUpdate_DiffersFromHead(t *testing.T) {
 		t.Fatalf("buf dep update (HEAD) failed (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
 			headExit, srvHead.Output.String(), headStderr)
 	}
-	headCommit, err := extractCommitFromLock(headLock)
+	headCommit, err := testutil.ExtractCommitFromLock(headLock)
 	if err != nil {
 		t.Fatalf("extract commit from HEAD lock: %v\nlock:\n%s", err, headLock)
 	}
@@ -192,7 +175,7 @@ func TestRefRespected_DepUpdate_DiffersFromHead(t *testing.T) {
 		t.Fatalf("buf dep update (ref=%s) failed (exit %d).\nServer output:\n%s\nBuf stderr:\n%s",
 			pinnedRef, refExit, srvRef.Output.String(), refStderr)
 	}
-	refCommit, err := extractCommitFromLock(refLock)
+	refCommit, err := testutil.ExtractCommitFromLock(refLock)
 	if err != nil {
 		t.Fatalf("extract commit from ref lock: %v\nlock:\n%s", err, refLock)
 	}
@@ -248,7 +231,7 @@ func TestRefRespected_BranchName_PinsBranchTip(t *testing.T) {
 			branchRef, exitCode, srv.Output.String(), stderr)
 	}
 
-	gotCommit, err := extractCommitFromLock(lock)
+	gotCommit, err := testutil.ExtractCommitFromLock(lock)
 	if err != nil {
 		t.Fatalf("extract commit from lock: %v\nlock:\n%s", err, lock)
 	}
@@ -305,7 +288,7 @@ func TestRefRespected_NonDefaultBranchCommitSHA(t *testing.T) {
 			branchTip, exitCode, srv.Output.String(), stderr)
 	}
 
-	gotCommit, err := extractCommitFromLock(lock)
+	gotCommit, err := testutil.ExtractCommitFromLock(lock)
 	if err != nil {
 		t.Fatalf("extract commit from lock: %v\nlock:\n%s", err, lock)
 	}
