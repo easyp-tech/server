@@ -4,14 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
-	"log/slog"
+	"github.com/google/go-github/v59/github"
 
 	connectpkg "github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/providers/content"
 	"github.com/easyp-tech/server/internal/providers/filter"
-	"github.com/google/go-github/v59/github"
 )
 
 func (c client) GetFiles(

@@ -4,9 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
-
 	"log/slog"
+	"time"
 
 	connectpkg "github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/providers/content"

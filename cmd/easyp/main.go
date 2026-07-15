@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"runtime/debug"
 	"strings"
 	"time"
-
-	"log/slog"
 
 	"github.com/easyp-tech/server/cmd/easyp/internal/config"
 	"github.com/easyp-tech/server/cmd/easyp/internal/config/cachetype"

@@ -20,12 +20,14 @@ import (
 // buf v1.69.0 (and later) requires. The buf client validates every commit
 // id with uuidutil.FromDashless, which does:
 //
-//   1. Assert length == 32
-//   2. Insert dashes and call uuid.Parse, which validates version/variant
+//  1. Assert length == 32
+//  2. Insert dashes and call uuid.Parse, which validates version/variant
 //
 // Before the commitUUID fix, ServeHTTP returned the raw 40-char git SHA
 // and buf v1.69.0 failed with:
-//   "Failure: expected dashless uuid to be of length 32 but was 40: ..."
+//
+//	"Failure: expected dashless uuid to be of length 32 but was 40: ..."
+//
 // This test reproduces the buf client's exact validation against the
 // response body, so any regression that leaks the raw SHA (or a non-UUID
 // 32-char hex string) is caught in CI without running the buf binary.

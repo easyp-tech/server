@@ -41,7 +41,8 @@ func IsValidationError(err error) bool {
 // (CodeInvalidArgument → HTTP 400) or anything else (CodeInternal → HTTP 500).
 //
 // Use this at the top of every connect-go handler that returns error:
-//   return nil, asConnectError(err)
+//
+//	return nil, asConnectError(err)
 //
 // asConnectError is nil-safe: it returns nil if err is nil.
 func asConnectError(err error) error {

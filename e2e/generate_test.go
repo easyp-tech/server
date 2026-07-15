@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/easyp-tech/server/e2e/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/easyp-tech/server/e2e/testutil"
 )
 
 // generatePinnedRef is the ref used by TestGenerateWithPinnedBufLock. It

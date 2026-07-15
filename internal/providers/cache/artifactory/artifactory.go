@@ -7,11 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
-
-	"log/slog"
 
 	connectpkg "github.com/easyp-tech/server/internal/connect"
 	"github.com/easyp-tech/server/internal/providers/content"
@@ -21,7 +20,7 @@ const defaultBodyLimit = 50 * 1 << 20 // 50MB
 
 var (
 	ErrUnexpected = errors.New("unexpected")
-	testFilePath   = "buf-proxy-connection-test.json"
+	testFilePath  = "buf-proxy-connection-test.json"
 )
 
 func New(

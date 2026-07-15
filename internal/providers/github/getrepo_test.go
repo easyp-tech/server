@@ -144,7 +144,6 @@ func TestGetMeta_DefaultBranchName_github(t *testing.T) {
 	}
 }
 
-
 // TestGetMeta_ConventionalDefaultName_github is the regression guard
 // for the v1.30.1 v1alpha1 case where the buf CLI sends the buf
 // default label name (e.g., "main") as the reference, even when it

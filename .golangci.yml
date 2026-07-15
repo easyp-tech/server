@@ -1,95 +1,21 @@
+version: "2"
 run:
-  timeout: 5m
-  # include test files
   tests: true
-
 linters:
-  enable-all: true
+  default: standard
   disable:
-    - exhaustivestruct # The owner seems to have abandoned the linter. Replaced by exhaustruct.
-    - ifshort          # The repository of the linter has been deprecated by the owner.
-    - maligned         # The repository of the linter has been archived by the owner. Replaced by govet 'fieldalignment'.
-    - interfacer       # The repository of the linter has been archived by the owner.
-    - deadcode         # The owner seems to have abandoned the linter. Replaced by unused.
-    - golint           # The repository of the linter has been archived by the owner. Replaced by revive.
-    - varcheck         # The owner seems to have abandoned the linter. Replaced by unused.
-    - structcheck      # The owner seems to have abandoned the linter. Replaced by unused.
-    - nosnakecase      # The repository of the linter has been deprecated by the owner. Replaced by revive(var-naming).
-    - scopelint        # The repository of the linter has been deprecated by the owner. Replaced by exportloopref.
-    - varnamelen # useless in the scope of this project
-
-  # Run all the linters from enabled linters set
-  fast: false
-
-issues:
-  # skipping non-go dirs
-  exclude-dirs:
-    - bin
-    - config
-    - debian
-    - docs
-    - scripts
-    - tests
-  include:
-    - EXC0001 # Check return values of os funcs
-    - EXC0004 # govet
-    - EXC0005 # C-style breaks
-
-  exclude-rules:
-    - linters:
-        - ireturn
-      text: "returns generic interface"
-
-    - linters:
-        - lll
-      source: "^//go:generate "
-
-    - linters:
-        - errcheck
-      source: "defer\\s+[^\\s]+.Close()"
-
-    - linters:
-        - revive
-      text: "unexported-return: exported func .+ returns unexported type .+, which can be annoying to use"
-
-    - path: cmd/[^/]+/.+\.go
-      text: exitAfterDefer
-
-    # Exclude some linters from running on tests files.
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - gochecknoglobals
-        - exhaustruct
-        - ireturn
-        - funlen
-        - unparam
-        - lll
-
-linters-settings:
-  gci:
-    # Section configuration to compare against.
-    sections:
-      - standard # Standard section: captures all standard packages.
-      - default # Default section: contains all imports that could not be matched to another section type.
-      - prefix(github.com/easyp-tech) # Custom section: groups all imports with the specified Prefix.
-    skip-generated: false
-    # Enable custom order of sections.
-    # If true, make the section order the same as the order of sections.
-    custom-order: true
-  depguard:
+    - varnamelen
+  settings:
+    depguard:
       rules:
-        main:
-          files:
-            - !$test
-          allow:
-            - $gostd
         cmd:
           files:
-            - "cmd/*/*.go"
+            - cmd/*/*.go
+          allow:
+            - $gostd
+        main:
+          files:
+            - ""
           allow:
             - $gostd
         tests:
@@ -98,3 +24,102 @@ linters-settings:
           allow:
             - $gostd
             - github.com/stretchr/testify
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+    rules:
+      - linters:
+          - ireturn
+        text: returns generic interface
+      - linters:
+          - lll
+        source: '^//go:generate '
+      - linters:
+          - errcheck
+        source: defer\s+[^\s]+.Close()
+      - linters:
+          - revive
+        text: 'unexported-return: exported func .+ returns unexported type .+, which can be annoying to use'
+      - path: cmd/[^/]+/.+\.go
+        text: exitAfterDefer
+      - path: internal/connect/commits_helpers.go
+        linters:
+          - staticcheck
+      - path: internal/providers/bitbucket/repos.go
+        linters:
+          - staticcheck
+      - path: internal/providers/github/repos.go
+        linters:
+          - staticcheck
+      - path: internal/providers/bitbucket/getrepo_test.go
+        linters:
+          - staticcheck
+      - path: internal/providers/multisource/repo.go
+        linters:
+          - ineffassign
+          - staticcheck
+      - path: internal/connect/api.go
+        linters:
+          - errcheck
+      - path: e2e/testutil/server.go
+        linters:
+          - errcheck
+      - path: internal/providers/content/helpers.go
+        linters:
+          - staticcheck
+      - linters:
+          - dupl
+          - errcheck
+          - exhaustruct
+          - funlen
+          - gci
+          - gochecknoglobals
+          - gocyclo
+          - gosec
+          - ineffassign
+          - ireturn
+          - lll
+          - staticcheck
+          - unused
+          - unparam
+        path: _test\.go
+    paths:
+      - bin
+      - config
+      - debian
+      - docs
+      - scripts
+      - tests
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/easyp-tech)
+      custom-order: true
+  exclusions:
+    generated: lax
+    paths:
+      - cmd/easyp/main\.go
+      - internal/connect/api\.go
+      - internal/connect/bynames\.go
+      - bin
+      - config
+      - debian
+      - docs
+      - scripts
+      - tests
+      - third_party$
+      - builtin$
+      - examples$

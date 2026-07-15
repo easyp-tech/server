@@ -1,0 +1,27 @@
+# Consumer template — copy into easyp-buf-proxy (or any Go module) as mise.toml.
+#
+# The [plugins] section lets `mise install` auto-install the custom plugin
+# without a manual `mise plugin install` step.
+
+[plugins]
+tools = "git::https://github.com/onokonem/mise-repo.git//.tools"
+
+[tools]
+"tools:go" = "1.26"               # bare version -> host os/arch cell
+"tools:golangci-lint" = "2.12-go1.26"
+
+# ---- tasks ----------------------------------------------------------------
+# All tasks run on the host OS/arch (no cross-compile for test/lint).
+# Cross-compile: mise run build
+
+[tasks.build]
+description = "Build all packages with CGO disabled."
+run = "CGO_ENABLED=0 go build ./..."
+
+[tasks.test]
+description = "Run tests with -race."
+run = "go test ./... -race -count=1"
+
+[tasks.lint]
+description = "Auto-fix then check against .golangci.yml."
+run = ["golangci-lint --version", "golangci-lint run --fix", "golangci-lint run"]

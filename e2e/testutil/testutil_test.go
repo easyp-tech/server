@@ -52,7 +52,8 @@ func TestConfigGeneration(t *testing.T) {
 	// Verify file mode is 0600.
 	info, err := os.Stat(cfgPath)
 	require.NoError(t, err, "stat config file")
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm(), "config file mode should be 0600")
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"config file mode should be 0600")
 }
 
 func TestRequireEnvToken_Skips(t *testing.T) {
@@ -113,7 +114,7 @@ func TestGetBuf_CachePath(t *testing.T) {
 
 	// Check execute bit is set.
 	mode := info.Mode()
-	assert.NotZero(t, mode.Perm()&0111,
+	assert.NotZero(t, mode.Perm()&0o111,
 		"buf binary should be executable (at least one execute bit set)")
 
 	// Verify it is actually a binary (starts with Mach-O or ELF magic, or is a script).

@@ -164,11 +164,11 @@ func TestShouldRetryHTTP(t *testing.T) {
 	}
 	// Retryable statuses.
 	for code := range map[int]struct{}{
-		http.StatusTooManyRequests:      {},
+		http.StatusTooManyRequests:     {},
 		http.StatusInternalServerError: {},
-		http.StatusBadGateway:           {},
-		http.StatusServiceUnavailable:   {},
-		http.StatusGatewayTimeout:       {},
+		http.StatusBadGateway:          {},
+		http.StatusServiceUnavailable:  {},
+		http.StatusGatewayTimeout:      {},
 	} {
 		if !shouldRetryHTTP(&http.Response{StatusCode: code}, nil) {
 			t.Errorf("status %d should retry", code)

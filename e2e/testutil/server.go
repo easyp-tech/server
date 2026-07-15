@@ -182,10 +182,12 @@ func runBufUpdate(t *testing.T, bufBinary string, port int, ref, subcommand stri
 deps:
   - %s
 `, depRef)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600), "writing buf.yaml")
+	require.NoError(t,
+		os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0o600),
+		"writing buf.yaml")
 
 	// Write a dummy proto file so modern buf CLI versions don't complain about empty workspace.
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0600), "writing dummy.proto")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0o600), "writing dummy.proto")
 
 	// Run buf update.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -258,11 +260,13 @@ func runBufGenerate(t *testing.T, bufBinary string, port int, pinnedCommit strin
 deps:
   - %s
 `, depRef)
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0600), "writing buf.yaml")
+	require.NoError(t,
+		os.WriteFile(filepath.Join(tmpDir, "buf.yaml"), []byte(bufYAML), 0o600),
+		"writing buf.yaml")
 
 	// Write a dummy proto so modern buf CLI versions don't complain about
 	// an empty workspace.
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0600), "writing dummy.proto")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "dummy.proto"), []byte(`syntax = "proto3"; package dummy;`), 0o600), "writing dummy.proto")
 
 	// Write buf.gen.yaml. The remote plugin version is pinned; the v1
 	// buf.gen.yaml format is understood by both v1.30.1 and v1.69.0.
@@ -274,7 +278,7 @@ plugins:
   - plugin: buf.build/protocolbuffers/go:v1.28.1
     out: gen/go
 `
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.gen.yaml"), []byte(bufGenYAML), 0600), "writing buf.gen.yaml")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "buf.gen.yaml"), []byte(bufGenYAML), 0o600), "writing buf.gen.yaml")
 
 	// Step 1: buf mod update to populate a real buf.lock.
 	{
@@ -308,7 +312,7 @@ plugins:
 	modified := strings.Replace(string(lockContent), originalCommit, pinnedCommit, 1)
 	require.NotEqual(t, string(lockContent), modified,
 		"overwrite did not change buf.lock: commit %q not found", originalCommit)
-	require.NoError(t, os.WriteFile(lockPath, []byte(modified), 0600), "writing overwritten buf.lock")
+	require.NoError(t, os.WriteFile(lockPath, []byte(modified), 0o600), "writing overwritten buf.lock")
 
 	// Step 3: buf generate with the overwritten lock. Longer timeout
 	// than the mod update step because the plugin fetch + codegen
